@@ -221,6 +221,23 @@ class TestFindDuplicateDeadline:
 
         assert match is None
 
+    def test_same_day_restricts_to_that_date(self, db_session):
+        tracked_date = datetime.now(timezone.utc) + timedelta(days=5)
+        repository.try_claim_email(db_session, "e1", "t1", "s1")
+        repository.mark_completed(
+            db_session, "e1", _extraction(email_id="e1", deadline=tracked_date), calendar_event_id="cal-1"
+        )
+
+        same_day_match = repository.find_duplicate_deadline(
+            db_session, "Test event", "e2", same_day=tracked_date.date()
+        )
+        different_day_match = repository.find_duplicate_deadline(
+            db_session, "Test event", "e2", same_day=(tracked_date + timedelta(days=1)).date()
+        )
+
+        assert same_day_match is not None and same_day_match.email_id == "e1"
+        assert different_day_match is None
+
 
 class TestMarkSuperseded:
     def test_marks_stale_and_links_to_new_email(self, db_session):

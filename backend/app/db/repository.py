@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import difflib
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -117,7 +117,7 @@ def _normalize_event_name(name: str) -> str:
 
 
 def find_duplicate_deadline(
-    session: Session, event_name: str, exclude_email_id: str
+    session: Session, event_name: str, exclude_email_id: str, same_day: "date | None" = None
 ) -> ProcessedEmail | None:
     """Look for an already-tracked, still-live deadline with a
     similar-sounding event name (claude/tradeoffs/duplicate-deadline-detection.md).
@@ -127,16 +127,25 @@ def find_duplicate_deadline(
     Calendar event and haven't already been superseded themselves — a
     duplicate should always resolve to the current, still-relevant row, not
     a stale link in a chain.
+
+    same_day, when given, restricts candidates to that exact calendar day —
+    used for the always-on "is this a plain repeat" check. Omit it to
+    search across all tracked deadlines regardless of date — used only when
+    the email contains reschedule-signaling language
+    (filters.contains_reschedule_language), since that search is what finds
+    an existing deadline whose date is *different* from this one.
     """
-    candidates = session.execute(
-        select(ProcessedEmail).where(
-            ProcessedEmail.status == ProcessingStatus.COMPLETED,
-            ProcessedEmail.extraction_action_type == ActionType.DEADLINE,
-            ProcessedEmail.calendar_event_id.is_not(None),
-            ProcessedEmail.is_stale.is_(False),
-            ProcessedEmail.email_id != exclude_email_id,
-        )
-    ).scalars().all()
+    conditions = [
+        ProcessedEmail.status == ProcessingStatus.COMPLETED,
+        ProcessedEmail.extraction_action_type == ActionType.DEADLINE,
+        ProcessedEmail.calendar_event_id.is_not(None),
+        ProcessedEmail.is_stale.is_(False),
+        ProcessedEmail.email_id != exclude_email_id,
+    ]
+    if same_day is not None:
+        conditions.append(func.date(ProcessedEmail.extraction_deadline_parsed) == same_day)
+
+    candidates = session.execute(select(ProcessedEmail).where(*conditions)).scalars().all()
 
     target = _normalize_event_name(event_name)
     best_match: ProcessedEmail | None = None

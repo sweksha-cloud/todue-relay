@@ -83,3 +83,27 @@ def is_deadline_candidate(subject: str, body_text: str, level: str = FILTER_LEVE
 
     signals = score_email(subject, body_text)
     return sum(signals.values()) >= LEVEL_THRESHOLDS[level]
+
+
+# Unrelated to the Step 1 pre-filter above — used by duplicate-deadline
+# detection (claude/tradeoffs/duplicate-deadline-detection.md) to decide
+# whether to search across ALL tracked deadlines (not just the same day)
+# for a possible reschedule. Known, accepted gap: a reschedule that just
+# restates a new date with none of these words won't be caught this way —
+# it'll create a second dashboard entry instead, which is visible, not silent.
+RESCHEDULE_KEYWORDS = [
+    r"\bresc?hedul(e|ed|ing)\b",
+    r"\bpostpon(e|ed|ing)\b",
+    r"\bmoved to\b",
+    r"\bpush(ed)? back\b",
+    r"\bnew (date|deadline|due date)\b",
+    r"\bupdated (date|deadline|due date)\b",
+    r"\bextend(ed)?\b",
+    r"\bchanged? to\b",
+    r"\bnow due\b",
+]
+_COMPILED_RESCHEDULE = re.compile("|".join(RESCHEDULE_KEYWORDS), re.IGNORECASE)
+
+
+def contains_reschedule_language(subject: str, body_text: str) -> bool:
+    return bool(_COMPILED_RESCHEDULE.search(f"{subject}\n{body_text}"))
