@@ -10,13 +10,15 @@ need work get claimed.
 
 from __future__ import annotations
 
+import difflib
+import re
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.config import STALE_CLAIM_MINUTES
+from app.config import DUPLICATE_EVENT_NAME_SIMILARITY_THRESHOLD, STALE_CLAIM_MINUTES
 from app.date_utils import has_explicit_time
 from app.db.models import ActionType, Confidence, OAuthToken, PipelineRun, ProcessedEmail, ProcessingStatus, RunStatus
 from app.schemas import ExtractionResult
@@ -85,6 +87,8 @@ def mark_completed(
     extraction: ExtractionResult,
     calendar_event_id: str | None,
     is_implausible: bool = False,
+    duplicate_of_email_id: str | None = None,
+    date_changed_from: datetime | None = None,
 ) -> None:
     row = session.get(ProcessedEmail, email_id)
     if row is None:
@@ -103,6 +107,67 @@ def mark_completed(
     row.extraction_recurrence_rule = extraction.recurrence_rule
     row.calendar_event_id = calendar_event_id
     row.is_implausible_date = is_implausible
+    row.duplicate_of_email_id = duplicate_of_email_id
+    row.date_changed_from = date_changed_from
+    session.commit()
+
+
+def _normalize_event_name(name: str) -> str:
+    return re.sub(r"[^a-z0-9 ]", "", name.lower()).strip()
+
+
+def find_duplicate_deadline(
+    session: Session, event_name: str, exclude_email_id: str
+) -> ProcessedEmail | None:
+    """Look for an already-tracked, still-live deadline with a
+    similar-sounding event name (claude/tradeoffs/duplicate-deadline-detection.md).
+
+    Cheap heuristic on purpose: normalized-name similarity via difflib, no
+    embeddings/LLM call. Only matches against rows that still have a live
+    Calendar event and haven't already been superseded themselves — a
+    duplicate should always resolve to the current, still-relevant row, not
+    a stale link in a chain.
+    """
+    candidates = session.execute(
+        select(ProcessedEmail).where(
+            ProcessedEmail.status == ProcessingStatus.COMPLETED,
+            ProcessedEmail.extraction_action_type == ActionType.DEADLINE,
+            ProcessedEmail.calendar_event_id.is_not(None),
+            ProcessedEmail.is_stale.is_(False),
+            ProcessedEmail.email_id != exclude_email_id,
+        )
+    ).scalars().all()
+
+    target = _normalize_event_name(event_name)
+    best_match: ProcessedEmail | None = None
+    best_score = 0.0
+    for row in candidates:
+        if not row.extraction_event_name:
+            continue
+        score = difflib.SequenceMatcher(
+            None, target, _normalize_event_name(row.extraction_event_name)
+        ).ratio()
+        if score > best_score:
+            best_score = score
+            best_match = row
+
+    if best_match is not None and best_score >= DUPLICATE_EVENT_NAME_SIMILARITY_THRESHOLD:
+        return best_match
+    return None
+
+
+def mark_superseded(session: Session, old_email_id: str, new_email_id: str) -> None:
+    """The OLD side of a detected deadline change: flag it stale and point
+    at the row that replaced it, without altering its own historical
+    extraction data (the audit trail stays intact — see
+    claude/tradeoffs/does-this-need-a-database.md).
+    """
+    row = session.get(ProcessedEmail, old_email_id)
+    if row is None:
+        raise ValueError(f"No such email {old_email_id}")
+
+    row.is_stale = True
+    row.superseded_by_email_id = new_email_id
     session.commit()
 
 

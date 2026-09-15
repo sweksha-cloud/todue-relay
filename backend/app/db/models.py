@@ -88,11 +88,23 @@ class ProcessedEmail(Base):
     # None = not yet reviewed by the user; True/False = their verdict.
     user_correction: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
-    # Unused until the deadline-changed policy (claude/tradeoffs/) is decided.
+    # Deadline-changed / duplicate detection (decided 2026-09-15, see
+    # claude/tradeoffs/duplicate-deadline-detection.md and
+    # claude/tradeoffs/deadline-changed-policy.md). Set on the OLD row once
+    # a newer email is recognized as referring to the same deadline.
     is_stale: Mapped[bool] = mapped_column(default=False)
     superseded_by_email_id: Mapped[str | None] = mapped_column(
         ForeignKey("processed_emails.email_id"), nullable=True
     )
+    # Set on the NEW row when it was recognized as a duplicate/update of an
+    # already-tracked deadline (points at the OLD row).
+    duplicate_of_email_id: Mapped[str | None] = mapped_column(
+        ForeignKey("processed_emails.email_id"), nullable=True
+    )
+    # Set on the NEW row only when the matched deadline's date actually
+    # changed — holds the prior date so the dashboard can show "was X, now
+    # Y" rather than just "something changed."
+    date_changed_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

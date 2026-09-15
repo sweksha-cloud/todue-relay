@@ -17,8 +17,10 @@ intentionally deferred — lives in `claude/` (gitignored, local-only):
 3. **Extract** structured deadline/action data via Gemini (`app/llm_client.py`)
 4. **Route**: high-confidence deadlines auto-create a Calendar event
    (a true recurring event if the email describes a repeating obligation,
-   e.g. "rent due the 1st of every month"); low confidence or no-fixed-date
-   items go to a review dashboard (`app/pipeline.py`)
+   e.g. "rent due the 1st of every month"); a deadline recognized as a
+   repeat or update of one already tracked skips creating a duplicate, or
+   moves the existing event if the date changed; low confidence or
+   no-fixed-date items go to a review dashboard (`app/pipeline.py`)
 5. **Track** every email's outcome in Postgres for idempotency and audit
    (`app/db/`) — safe to re-run, never double-processes or double-creates
 6. **Review** via a small dashboard (`app/main.py` + `app/templates/`)
@@ -109,9 +111,9 @@ TEST_DATABASE_URL=postgresql+psycopg://postgres:test@localhost:55432/testdb \
   python -m pytest tests/ -v
 ```
 
-54 tests: date/timezone parsing, pre-filter scoring, LLM response
-validation, Calendar event construction (including recurrence), and the
-idempotency claim logic against real Postgres (the claim logic uses
+62 tests: date/timezone parsing, pre-filter scoring, LLM response
+validation, Calendar event construction (including recurrence), duplicate-
+deadline matching, and the idempotency claim logic against real Postgres (the claim logic uses
 `ON CONFLICT ... RETURNING`, which has no SQLite equivalent, so a real
 Postgres instance is required — `TEST_DATABASE_URL` points at one, separate
 from the app's own `DATABASE_URL`). Runs automatically on every push via
@@ -168,9 +170,9 @@ backend/
 ## Status
 
 Steps 1-8 built, tested, and verified against a real inbox, real Gemini
-calls, real Calendar events (including true recurring events), and real
-GitHub Actions runs. An automated test suite (54 tests) and CI run on
-every push. A security review pass
+calls, real Calendar events (including true recurring events and
+duplicate-deadline handling), and real GitHub Actions runs. An automated
+test suite (62 tests) and CI run on every push. A security review pass
 is complete (dependency CVEs patched, workflow permissions restricted,
 XSS/injection risk checked directly, no secrets in git history) — one
 accepted gap: the dashboard has no authentication, fine while run

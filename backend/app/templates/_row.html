@@ -16,6 +16,14 @@
     {% if email.extraction_is_recurring %}
       <span class="badge badge-recurring" title="Scheduled as a recurring Calendar event ({{ email.extraction_recurrence_rule }})">🔁 recurring</span>
     {% endif %}
+    {% if email.date_changed_from %}
+      <span class="badge badge-rescheduled" title="Calendar event moved automatically">📅 rescheduled: was {{ (email.date_changed_from | to_local).strftime("%b %d, %Y") }}, now {{ (email.extraction_deadline_parsed | to_local).strftime("%b %d, %Y") }}</span>
+    {% elif email.duplicate_of_email_id %}
+      <span class="badge badge-duplicate" title="Recognized as the same deadline as an already-tracked email">🔗 duplicate, already tracked</span>
+    {% endif %}
+    {% if email.is_stale %}
+      <span class="badge badge-skipped" title="A newer email updated this deadline's date">⏭ superseded</span>
+    {% endif %}
   </td>
   <td class="verdict">{{ (email.created_at | to_local).strftime("%b %d, %Y %I:%M %p") }}</td>
   <td>

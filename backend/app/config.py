@@ -77,3 +77,13 @@ FETCH_WINDOW_DAYS = int(os.getenv("FETCH_WINDOW_DAYS", "2"))
 # never auto-rejected.
 PLAUSIBLE_MAX_PAST_DAYS = int(os.getenv("PLAUSIBLE_MAX_PAST_DAYS", "3"))
 PLAUSIBLE_MAX_FUTURE_DAYS = int(os.getenv("PLAUSIBLE_MAX_FUTURE_DAYS", "365"))
+
+# Duplicate-deadline matching (claude/tradeoffs/duplicate-deadline-detection.md,
+# decided 2026-09-15): two extractions are treated as the same underlying
+# deadline if their normalized event names are at least this similar
+# (difflib.SequenceMatcher ratio, 0-1). Placeholder, not yet tuned against
+# real data — same "needs a real tuning pass" status the Step 1 pre-filter
+# started at before tune_filter.py was run against a real inbox.
+DUPLICATE_EVENT_NAME_SIMILARITY_THRESHOLD = float(
+    os.getenv("DUPLICATE_EVENT_NAME_SIMILARITY_THRESHOLD", "0.7")
+)
