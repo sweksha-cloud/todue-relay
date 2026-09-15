@@ -111,7 +111,7 @@ TEST_DATABASE_URL=postgresql+psycopg://postgres:test@localhost:55432/testdb \
   python -m pytest tests/ -v
 ```
 
-62 tests: date/timezone parsing, pre-filter scoring, LLM response
+66 tests: date/timezone parsing, pre-filter scoring, LLM response
 validation, Calendar event construction (including recurrence), duplicate-
 deadline matching, and the idempotency claim logic against real Postgres (the claim logic uses
 `ON CONFLICT ... RETURNING`, which has no SQLite equivalent, so a real
@@ -164,7 +164,7 @@ backend/
   scripts/
     run_pipeline.py                # manual entry point (also what CI schedules)
     tune_filter.py                  # pre-filter tuning against real inbox
-  tests/                             # 46 tests, see Testing section above
+  tests/                             # 66 tests, see Testing section above
 ```
 
 ## Status
@@ -172,7 +172,7 @@ backend/
 Steps 1-8 built, tested, and verified against a real inbox, real Gemini
 calls, real Calendar events (including true recurring events and
 duplicate-deadline handling), and real GitHub Actions runs. An automated
-test suite (62 tests) and CI run on every push. A security review pass
+test suite (66 tests) and CI run on every push. A security review pass
 is complete (dependency CVEs patched, workflow permissions restricted,
 XSS/injection risk checked directly, no secrets in git history) — one
 accepted gap: the dashboard has no authentication, fine while run

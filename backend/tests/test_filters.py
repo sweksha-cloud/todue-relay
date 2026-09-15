@@ -1,4 +1,4 @@
-from app.filters import is_deadline_candidate, score_email
+from app.filters import contains_reschedule_language, is_deadline_candidate, score_email
 
 
 class TestScoreEmail:
@@ -53,3 +53,19 @@ class TestIsDeadlineCandidate:
 
         with pytest.raises(ValueError):
             is_deadline_candidate("x", "y", level="nonsense")
+
+
+class TestContainsRescheduleLanguage:
+    def test_detects_common_reschedule_phrasing(self):
+        assert contains_reschedule_language("Assignment 3 rescheduled", "") is True
+        assert contains_reschedule_language("Update", "The deadline has been moved to Friday.") is True
+        assert contains_reschedule_language("Update", "New due date: April 25.") is True
+
+    def test_plain_restated_date_is_not_detected(self):
+        """Known, accepted gap (claude/tradeoffs/duplicate-deadline-detection.md):
+        a reschedule that doesn't use any signal words isn't caught here —
+        it's caught downstream by creating a visible (not silent) second entry."""
+        assert contains_reschedule_language("Assignment 3", "Assignment 3 due April 25.") is False
+
+    def test_unrelated_email_is_not_detected(self):
+        assert contains_reschedule_language("Newsletter", "Nothing about dates here.") is False
