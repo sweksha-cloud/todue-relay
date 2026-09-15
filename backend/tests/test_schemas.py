@@ -70,3 +70,39 @@ class TestParseLlmResponse:
     def test_malformed_json_raises_parse_error(self):
         with pytest.raises(ExtractionParseError):
             parse_llm_response("{not valid json")
+
+    def test_recurring_deadline_carries_recurrence_rule(self):
+        raw = json.dumps({
+            "email_id": "r1", "event_name": "Rent", "deadline_date": "October 1, 2026",
+            "source_context": "due monthly", "confidence": "high", "action_type": "deadline",
+            "is_recurring": True, "recurrence_rule": "FREQ=MONTHLY;BYMONTHDAY=1",
+        })
+
+        result = parse_llm_response(raw)
+
+        assert result.is_recurring is True
+        assert result.recurrence_rule == "FREQ=MONTHLY;BYMONTHDAY=1"
+
+    def test_recurring_without_rule_raises_parse_error(self):
+        raw = json.dumps({
+            "email_id": "r2", "event_name": "Rent", "deadline_date": "October 1, 2026",
+            "source_context": "due monthly", "confidence": "high", "action_type": "deadline",
+            "is_recurring": True, "recurrence_rule": None,
+        })
+
+        with pytest.raises(ExtractionParseError):
+            parse_llm_response(raw)
+
+    def test_missing_recurrence_fields_default_to_non_recurring(self):
+        """Older-shape payloads (no recurrence fields at all) still parse —
+        additive schema change, nothing is forced to break."""
+        raw = json.dumps({
+            "email_id": "abc123", "event_name": "Assignment 3",
+            "deadline_date": "April 18, 2026 at 11:59pm", "source_context": "due 4/18",
+            "confidence": "high", "action_type": "deadline",
+        })
+
+        result = parse_llm_response(raw)
+
+        assert result.is_recurring is False
+        assert result.recurrence_rule is None

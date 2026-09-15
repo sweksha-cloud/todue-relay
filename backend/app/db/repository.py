@@ -99,6 +99,8 @@ def mark_completed(
     row.extraction_confidence = Confidence(extraction.confidence)
     row.extraction_action_type = ActionType(extraction.action_type)
     row.extraction_has_time = has_explicit_time(extraction.deadline_date_raw)
+    row.extraction_is_recurring = extraction.is_recurring
+    row.extraction_recurrence_rule = extraction.recurrence_rule
     row.calendar_event_id = calendar_event_id
     row.is_implausible_date = is_implausible
     session.commit()

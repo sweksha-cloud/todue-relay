@@ -68,6 +68,11 @@ class ProcessedEmail(Base):
     # Whether extraction_deadline_raw encoded an actual time (vs. date-only)
     # — decides timed vs. all-day Calendar event at approve/auto-create time.
     extraction_has_time: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # A single email describing a repeating obligation ("rent due the 1st
+    # of every month") -> a true recurring Calendar event (RRULE), not a
+    # one-off. See claude/post-prod/recurring-events.md (decided 2026-09-15).
+    extraction_is_recurring: Mapped[bool] = mapped_column(Boolean, default=False)
+    extraction_recurrence_rule: Mapped[str | None] = mapped_column(String, nullable=True)
     # Failed the plausibility check (too far past/future to trust) —
     # distinct from plain low confidence, so the dashboard can show "this
     # date looks wrong" separately from "this is just uncertain." Never

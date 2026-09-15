@@ -34,6 +34,19 @@ class TestBuildEventBody:
         assert body["end"]["date"] == "2026-09-12"  # exclusive end, one day later
         assert "dateTime" not in body["start"]
 
+    def test_recurrence_rule_adds_rrule_with_prefix(self):
+        body = build_event_body(
+            "Rent", "desc", datetime(2026, 9, 1), has_time=False,
+            recurrence_rule="FREQ=MONTHLY;BYMONTHDAY=1",
+        )
+
+        assert body["recurrence"] == ["RRULE:FREQ=MONTHLY;BYMONTHDAY=1"]
+
+    def test_no_recurrence_rule_omits_recurrence_key(self):
+        body = build_event_body("Test", "desc", datetime(2026, 9, 11), has_time=False)
+
+        assert "recurrence" not in body
+
 
 class TestEventOperations:
     def test_create_event_returns_id(self):
@@ -43,6 +56,18 @@ class TestEventOperations:
         event_id = create_event(service, "Test", "desc", datetime(2026, 9, 11), has_time=False)
 
         assert event_id == "abc123"
+
+    def test_create_event_passes_recurrence_rule_through(self):
+        service = MagicMock()
+        service.events().insert().execute.return_value = {"id": "series-1"}
+
+        create_event(
+            service, "Standup", "desc", datetime(2026, 9, 14, 9, 0), has_time=True,
+            recurrence_rule="FREQ=WEEKLY;BYDAY=MO",
+        )
+
+        body = service.events().insert.call_args.kwargs["body"]
+        assert body["recurrence"] == ["RRULE:FREQ=WEEKLY;BYDAY=MO"]
 
     def test_update_event_calls_patch_with_event_id(self):
         service = MagicMock()

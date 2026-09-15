@@ -131,6 +131,7 @@ def _process_one(session, email) -> None:
             description=extraction.source_context,
             deadline=extraction.deadline_date,
             has_time=has_explicit_time(extraction.deadline_date_raw),
+            recurrence_rule=extraction.recurrence_rule,
         )
         repository.mark_completed(session, email.id, extraction, calendar_event_id=event_id)
     else:

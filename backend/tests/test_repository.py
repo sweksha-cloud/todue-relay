@@ -10,7 +10,10 @@ from app.db.models import ProcessedEmail, ProcessingStatus
 from app.schemas import ExtractionResult
 
 
-def _extraction(email_id="e1", confidence="high", action_type="deadline", deadline=None):
+def _extraction(
+    email_id="e1", confidence="high", action_type="deadline", deadline=None,
+    is_recurring=False, recurrence_rule=None,
+):
     return ExtractionResult(
         email_id=email_id,
         event_name="Test event",
@@ -19,6 +22,8 @@ def _extraction(email_id="e1", confidence="high", action_type="deadline", deadli
         source_context="test",
         confidence=confidence,
         action_type=action_type,
+        is_recurring=is_recurring,
+        recurrence_rule=recurrence_rule,
     )
 
 
@@ -92,6 +97,23 @@ class TestMarkCompleted:
         row = db_session.get(ProcessedEmail, "e1")
         assert row.is_implausible_date is True
         assert row.calendar_event_id is None
+
+    def test_recurring_extraction_stores_flag_and_rule(self, db_session):
+        repository.try_claim_email(db_session, "e1", "t1", "subject")
+        extraction = _extraction(is_recurring=True, recurrence_rule="FREQ=MONTHLY;BYMONTHDAY=1")
+        repository.mark_completed(db_session, "e1", extraction, calendar_event_id="cal-1")
+
+        row = db_session.get(ProcessedEmail, "e1")
+        assert row.extraction_is_recurring is True
+        assert row.extraction_recurrence_rule == "FREQ=MONTHLY;BYMONTHDAY=1"
+
+    def test_non_recurring_extraction_defaults_false(self, db_session):
+        repository.try_claim_email(db_session, "e1", "t1", "subject")
+        repository.mark_completed(db_session, "e1", _extraction(), calendar_event_id="cal-1")
+
+        row = db_session.get(ProcessedEmail, "e1")
+        assert row.extraction_is_recurring is False
+        assert row.extraction_recurrence_rule is None
 
 
 class TestGetTerminalEmailIds:

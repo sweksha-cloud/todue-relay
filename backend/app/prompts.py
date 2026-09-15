@@ -32,10 +32,21 @@ something (propose interview times, confirm attendance, answer a question) \
 and does NOT state a fixed date/time of its own — the recipient's reply is \
 what's needed, not showing up by a deadline
   - "unclear": genuinely ambiguous whether this needs any action at all
+- is_recurring: true only if the email itself describes something that \
+repeats on a schedule ("rent due on the 1st of every month", "standup every \
+Monday at 9am", "due weekly"), not just because this looks like a deadline \
+you've seen before. false for a one-time deadline, and false for \
+action_type values other than "deadline".
+- recurrence_rule: when is_recurring is true, an iCalendar RRULE value (no \
+"RRULE:" prefix), otherwise null. Use only FREQ/BYDAY/BYMONTHDAY/INTERVAL — \
+examples: "every Monday" -> "FREQ=WEEKLY;BYDAY=MO", "1st of every month" -> \
+"FREQ=MONTHLY;BYMONTHDAY=1", "every day" -> "FREQ=DAILY", "annually" -> \
+"FREQ=YEARLY", "every two weeks" -> "FREQ=WEEKLY;INTERVAL=2". deadline_date \
+should still be the next upcoming occurrence, as a normal date/time.
 
-If action_type is "needs_reply" or "unclear", deadline_date MUST be null \
-and confidence MUST be "low" — no calendar event will be created; it's \
-handled as an action item to review instead.
+If action_type is "needs_reply" or "unclear", deadline_date MUST be null, \
+confidence MUST be "low", and is_recurring MUST be false — no calendar \
+event will be created; it's handled as an action item to review instead.
 """
 
 

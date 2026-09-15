@@ -24,9 +24,14 @@ def build_event_body(
     description: str,
     deadline: datetime,
     has_time: bool,
+    recurrence_rule: str | None = None,
 ) -> dict:
     """A timed deadline becomes a short block (EVENT_DURATION_MINUTES) at
     that time; a date-only deadline becomes a single all-day event.
+
+    recurrence_rule (an RRULE value with no "RRULE:" prefix, e.g.
+    "FREQ=MONTHLY;BYMONTHDAY=1") turns the event into a true recurring
+    series instead of a one-off — see claude/post-prod/recurring-events.md.
     """
     if has_time:
         tz = detect_local_timezone()
@@ -37,21 +42,26 @@ def build_event_body(
         # i.e. it read our "16:45" as 16:45 UTC, not 16:45 local).
         aware_deadline = deadline if deadline.tzinfo else deadline.replace(tzinfo=ZoneInfo(tz))
         end = aware_deadline + timedelta(minutes=EVENT_DURATION_MINUTES)
-        return {
+        body = {
             "summary": summary,
             "description": description,
             "start": {"dateTime": aware_deadline.isoformat(), "timeZone": tz},
             "end": {"dateTime": end.isoformat(), "timeZone": tz},
         }
+    else:
+        start_date = deadline.date()
+        end_date = start_date + timedelta(days=1)  # Calendar all-day events use an exclusive end date
+        body = {
+            "summary": summary,
+            "description": description,
+            "start": {"date": start_date.isoformat()},
+            "end": {"date": end_date.isoformat()},
+        }
 
-    start_date = deadline.date()
-    end_date = start_date + timedelta(days=1)  # Calendar all-day events use an exclusive end date
-    return {
-        "summary": summary,
-        "description": description,
-        "start": {"date": start_date.isoformat()},
-        "end": {"date": end_date.isoformat()},
-    }
+    if recurrence_rule:
+        body["recurrence"] = [f"RRULE:{recurrence_rule}"]
+
+    return body
 
 
 def create_event(
@@ -61,11 +71,14 @@ def create_event(
     deadline: datetime,
     has_time: bool,
     calendar_id: str = "primary",
+    recurrence_rule: str | None = None,
 ) -> str:
     """Create the event and return its Calendar event id (stored in
     ProcessedEmail.calendar_event_id for the audit trail / idempotency).
+    For a recurring series, this id is the master event's id — patch/delete
+    against it affects the whole series, not a single instance.
     """
-    body = build_event_body(summary, description, deadline, has_time)
+    body = build_event_body(summary, description, deadline, has_time, recurrence_rule)
     created = service.events().insert(calendarId=calendar_id, body=body).execute()
     return created["id"]
 

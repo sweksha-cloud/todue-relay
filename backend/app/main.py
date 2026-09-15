@@ -207,6 +207,7 @@ def approve_email(request: Request, email_id: str, db: Session = Depends(get_db)
         description=row.extraction_source_context or "",
         deadline=row.extraction_deadline_parsed,
         has_time=bool(row.extraction_has_time),
+        recurrence_rule=row.extraction_recurrence_rule if row.extraction_is_recurring else None,
     )
     row = repository.set_calendar_event(db, email_id, event_id)
     return templates.TemplateResponse(request, "_row.html", {"email": row})
