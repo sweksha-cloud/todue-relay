@@ -13,6 +13,9 @@
     {% if email.is_implausible_date %}
       <span class="badge badge-failed" title="Date is outside the plausible range — likely a parsing error, not a real deadline this far out">⚠ implausible date</span>
     {% endif %}
+    {% if email.extraction_is_recurring %}
+      <span class="badge badge-recurring" title="Scheduled as a recurring Calendar event ({{ email.extraction_recurrence_rule }})">🔁 recurring</span>
+    {% endif %}
   </td>
   <td class="verdict">{{ (email.created_at | to_local).strftime("%b %d, %Y %I:%M %p") }}</td>
   <td>

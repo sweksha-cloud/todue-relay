@@ -26,6 +26,8 @@ EXTRACTION_JSON_SCHEMA = {
         "source_context": {"type": "string"},
         "confidence": {"type": "string", "enum": ["high", "low"]},
         "action_type": {"type": "string", "enum": ["deadline", "needs_reply", "unclear"]},
+        "is_recurring": {"type": "boolean"},
+        "recurrence_rule": {"type": ["string", "null"]},
     },
     "required": [
         "email_id",
@@ -39,7 +41,11 @@ EXTRACTION_JSON_SCHEMA = {
 
 
 class RawExtraction(BaseModel):
-    """Exact shape the LLM is asked to return."""
+    """Exact shape the LLM is asked to return.
+
+    is_recurring/recurrence_rule default to false/None so older test
+    payloads (and any client not yet aware of recurrence) still validate.
+    """
 
     email_id: str
     event_name: str
@@ -47,6 +53,11 @@ class RawExtraction(BaseModel):
     source_context: str
     confidence: Literal["high", "low"]
     action_type: ActionType
+    is_recurring: bool = False
+    # RRULE value (no "RRULE:" prefix — the Calendar client adds that),
+    # e.g. "FREQ=MONTHLY;BYMONTHDAY=1". Required when is_recurring is True,
+    # validated in parse_llm_response below.
+    recurrence_rule: str | None = None
 
 
 class ExtractionResult(BaseModel):
@@ -59,6 +70,8 @@ class ExtractionResult(BaseModel):
     source_context: str
     confidence: Literal["high", "low"]
     action_type: ActionType
+    is_recurring: bool = False
+    recurrence_rule: str | None = None
 
 
 class ExtractionParseError(Exception):
@@ -81,6 +94,13 @@ def parse_llm_response(raw_json_text: str) -> ExtractionResult:
 
     parsed_date = parse_deadline_date(raw.deadline_date)  # may raise UnparseableDateError
 
+    if raw.is_recurring and not raw.recurrence_rule:
+        raise ExtractionParseError(
+            "is_recurring is true but recurrence_rule is missing"
+        )
+    # Normalize: never carry a stray recurrence_rule when is_recurring is false.
+    recurrence_rule = raw.recurrence_rule if raw.is_recurring else None
+
     return ExtractionResult(
         email_id=raw.email_id,
         event_name=raw.event_name,
@@ -89,4 +109,6 @@ def parse_llm_response(raw_json_text: str) -> ExtractionResult:
         source_context=raw.source_context,
         confidence=raw.confidence,
         action_type=raw.action_type,
+        is_recurring=raw.is_recurring,
+        recurrence_rule=recurrence_rule,
     )
