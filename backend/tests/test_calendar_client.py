@@ -1,0 +1,63 @@
+from datetime import datetime
+from unittest.mock import MagicMock, patch
+
+from app.calendar_client import build_event_body, create_event, delete_event, update_event
+
+
+class TestBuildEventBody:
+    def test_timed_event_gets_explicit_utc_offset(self):
+        """Regression test for a real created-event bug: Google treated a
+        naive dateTime as UTC regardless of a separate timeZone field
+        (16:45 sent -> stored as 09:45-07:00). The fix attaches the offset
+        directly to the dateTime string so there's nothing for the API to
+        misinterpret.
+        """
+        with patch("app.calendar_client.detect_local_timezone", return_value="America/Los_Angeles"):
+            body = build_event_body("Test", "desc", datetime(2026, 9, 11, 16, 45), has_time=True)
+
+        assert body["start"]["dateTime"] == "2026-09-11T16:45:00-07:00"
+        assert body["start"]["timeZone"] == "America/Los_Angeles"
+
+    def test_already_aware_deadline_is_not_double_converted(self):
+        from zoneinfo import ZoneInfo
+
+        aware = datetime(2026, 9, 20, 23, 59, tzinfo=ZoneInfo("America/Los_Angeles"))
+        with patch("app.calendar_client.detect_local_timezone", return_value="America/Los_Angeles"):
+            body = build_event_body("Test", "desc", aware, has_time=True)
+
+        assert body["start"]["dateTime"] == "2026-09-20T23:59:00-07:00"
+
+    def test_all_day_event_uses_exclusive_end_date(self):
+        body = build_event_body("Test", "desc", datetime(2026, 9, 11), has_time=False)
+
+        assert body["start"]["date"] == "2026-09-11"
+        assert body["end"]["date"] == "2026-09-12"  # exclusive end, one day later
+        assert "dateTime" not in body["start"]
+
+
+class TestEventOperations:
+    def test_create_event_returns_id(self):
+        service = MagicMock()
+        service.events().insert().execute.return_value = {"id": "abc123"}
+
+        event_id = create_event(service, "Test", "desc", datetime(2026, 9, 11), has_time=False)
+
+        assert event_id == "abc123"
+
+    def test_update_event_calls_patch_with_event_id(self):
+        service = MagicMock()
+
+        update_event(service, "existing-id", "Test", "desc", datetime(2026, 9, 11, 16, 45), has_time=True)
+
+        service.events().patch.assert_called_with(
+            calendarId="primary",
+            eventId="existing-id",
+            body=service.events().patch.call_args.kwargs["body"],
+        )
+
+    def test_delete_event_calls_delete_with_event_id(self):
+        service = MagicMock()
+
+        delete_event(service, "existing-id")
+
+        service.events().delete.assert_called_with(calendarId="primary", eventId="existing-id")
