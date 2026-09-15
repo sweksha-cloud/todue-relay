@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card run-banner">
+  {% if latest_run %}
+    <span class="run-dot {{ latest_run.status.value }}"></span>
+    {% if latest_run.status.value == "running" %}
+      Run in progress (started {{ (latest_run.started_at | to_local).strftime("%b %d, %I:%M %p") }})
+    {% else %}
+      Last run <strong>{{ latest_run.status.value }}</strong> — {{ (latest_run.finished_at | to_local).strftime("%b %d, %Y %I:%M %p") if latest_run.finished_at else "?" }}
+      &middot; {{ latest_run.emails_processed }} processed, {{ latest_run.emails_failed }} failed
+      {% if latest_run.error_message %}&middot; {{ latest_run.error_message }}{% endif %}
+    {% endif %}
+  {% else %}
+    <span class="run-dot none"></span> No runs yet
+  {% endif %}
+</div>
+
+<div class="card summary-row">
+  <div class="stat">
+    <div class="num">{{ caught_this_week }}</div>
+    <div class="label">Deadlines caught this week</div>
+  </div>
+  <div class="stat">
+    <div class="num">{{ "%.0f%%"|format(correction_rate * 100) if correction_rate is not none else "—" }}</div>
+    <div class="label">Correction rate ({{ "so far" if correction_rate is not none else "no reviews yet" }})</div>
+  </div>
+</div>
+
+<div class="card overflow-x">
+  <table>
+    <thead>
+      <tr>
+        <th>Subject</th>
+        <th>Extracted deadline</th>
+        <th>Status</th>
+        <th>Processed</th>
+        <th>Correction</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for email in emails %}
+        {% include "_row.html" %}
+      {% else %}
+        <tr><td colspan="5" class="verdict">No emails processed yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if total_pages > 1 %}
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px; font-size:0.85rem;">
+      {% if page > 1 %}
+        <a href="/?page={{ page - 1 }}&action_page={{ action_page }}">&larr; Newer</a>
+      {% else %}
+        <span></span>
+      {% endif %}
+      <span class="verdict">Page {{ page }} of {{ total_pages }}</span>
+      {% if page < total_pages %}
+        <a href="/?page={{ page + 1 }}&action_page={{ action_page }}">Older &rarr;</a>
+      {% else %}
+        <span></span>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2 style="font-size:1.05rem; margin-top:0;">Action items</h2>
+  <p class="verdict" style="margin-top:-8px;">No fixed date — needs a reply or a look, not a calendar event.</p>
+  {% for day, items in action_items_by_day %}
+    <h3 style="font-size:0.85rem; color:var(--muted); margin-bottom:6px;">{{ day.strftime("%A, %b %d") }}</h3>
+    <ul style="list-style:none; padding-left:0; margin-top:0;">
+      {% for item in items %}
+        <li style="padding:6px 0; border-bottom:1px solid var(--border);">
+          <span class="badge {{ action_type_badge_class(item.extraction_action_type.value) }}">{{ action_type_label(item.extraction_action_type.value) }}</span>
+          <strong>{{ item.email_subject }}</strong>
+          {% if item.extraction_source_context %}<br><span class="verdict">{{ item.extraction_source_context }}</span>{% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="verdict">Nothing needs a reply right now.</p>
+  {% endfor %}
+  {% if total_action_pages > 1 %}
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px; font-size:0.85rem;">
+      {% if action_page > 1 %}
+        <a href="/?page={{ page }}&action_page={{ action_page - 1 }}">&larr; Newer</a>
+      {% else %}
+        <span></span>
+      {% endif %}
+      <span class="verdict">Page {{ action_page }} of {{ total_action_pages }}</span>
+      {% if action_page < total_action_pages %}
+        <a href="/?page={{ page }}&action_page={{ action_page + 1 }}">Older &rarr;</a>
+      {% else %}
+        <span></span>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
+
+{% endblock %}

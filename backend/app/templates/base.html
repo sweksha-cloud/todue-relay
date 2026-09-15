@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ToDue Relay</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f7f8;
+      --card-bg: #ffffff;
+      --border: #e2e2e5;
+      --text: #1c1c1e;
+      --muted: #6b6b70;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #17171a;
+        --card-bg: #232326;
+        --border: #38383c;
+        --text: #f0f0f2;
+        --muted: #9a9aa0;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 24px 16px;
+    }
+    .wrap { max-width: 960px; margin: 0 auto; }
+    h1 { font-size: 1.4rem; margin: 0 0 16px; }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin-bottom: 16px;
+    }
+    .run-banner { display: flex; align-items: center; gap: 10px; font-size: 0.95rem; }
+    .run-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .run-dot.success { background: #2fb344; }
+    .run-dot.failure { background: #e5484d; }
+    .run-dot.running { background: #f5a623; }
+    .run-dot.none { background: var(--muted); }
+    .summary-row { display: flex; gap: 24px; flex-wrap: wrap; }
+    .stat { min-width: 140px; }
+    .stat .num { font-size: 1.6rem; font-weight: 600; }
+    .stat .label { color: var(--muted); font-size: 0.85rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--muted); font-weight: 500; font-size: 0.8rem; text-transform: uppercase; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; }
+    .badge-added { background: #d7f3db; color: #1c6b28; }
+    .badge-review { background: #fdecc8; color: #8a5a00; }
+    .badge-skipped { background: #e5e5e8; color: var(--muted); }
+    .badge-processing { background: #d6e8fd; color: #1a4f8c; }
+    .badge-failed { background: #fbdadb; color: #a3202a; }
+    @media (prefers-color-scheme: dark) {
+      .badge-added { background: #143d1c; color: #7bdb8a; }
+      .badge-review { background: #4a3400; color: #f5c25c; }
+      .badge-skipped { background: #303034; color: var(--muted); }
+      .badge-processing { background: #0f2c4d; color: #7bb2f5; }
+      .badge-failed { background: #4a1418; color: #f58c92; }
+    }
+    button.vote { border: 1px solid var(--border); background: var(--card-bg); color: var(--text); border-radius: 6px; padding: 3px 8px; font-size: 0.8rem; cursor: pointer; margin-right: 4px; }
+    button.vote:hover { background: var(--bg); }
+    .verdict { font-size: 0.8rem; color: var(--muted); }
+    .overflow-x { overflow-x: auto; }
+    a { color: #1a6fd1; text-decoration: none; font-weight: 500; }
+    a:hover { text-decoration: underline; }
+    @media (prefers-color-scheme: dark) {
+      a { color: #6fb1f5; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>ToDue Relay</h1>
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

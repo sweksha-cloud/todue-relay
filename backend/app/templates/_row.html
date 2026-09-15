@@ -1,0 +1,41 @@
+<tr id="row-{{ email.email_id }}">
+  <td>{{ email.email_subject }}</td>
+  <td>
+    {% if email.extraction_event_name %}
+      {{ email.extraction_event_name }}<br>
+      <span class="verdict">{{ (email.extraction_deadline_parsed | to_local).strftime("%b %d, %Y %I:%M %p") if email.extraction_deadline_parsed else "no date" }}</span>
+    {% else %}
+      <span class="verdict">—</span>
+    {% endif %}
+  </td>
+  <td>
+    <span class="badge {{ status_badge_class(display_status(email)) }}">{{ display_status(email) }}</span>
+    {% if email.is_implausible_date %}
+      <span class="badge badge-failed" title="Date is outside the plausible range — likely a parsing error, not a real deadline this far out">⚠ implausible date</span>
+    {% endif %}
+  </td>
+  <td class="verdict">{{ (email.created_at | to_local).strftime("%b %d, %Y %I:%M %p") }}</td>
+  <td>
+    {% if display_status(email) == "needs review" %}
+      <button class="vote" hx-post="/emails/{{ email.email_id }}/approve" hx-target="#row-{{ email.email_id }}" hx-swap="outerHTML">✓ Approve</button>
+      <button class="vote" hx-post="/emails/{{ email.email_id }}/decline" hx-target="#row-{{ email.email_id }}" hx-swap="outerHTML">✗ Don't add</button>
+    {% elif email.calendar_event_id and email.user_correction is none %}
+      {# Live Calendar event — "wrong" must resolve to an actual calendar change, not just a flag. #}
+      <div style="display:flex; flex-wrap:wrap; align-items:center; gap:4px;">
+        <button class="vote" hx-post="/emails/{{ email.email_id }}/correct" hx-vals='{"is_correct": "true"}' hx-target="#row-{{ email.email_id }}" hx-swap="outerHTML">✓ Correct</button>
+        <form hx-post="/emails/{{ email.email_id }}/reschedule" hx-target="#row-{{ email.email_id }}" hx-swap="outerHTML" style="display:inline-flex; gap:4px; align-items:center;">
+          <input type="datetime-local" name="new_datetime" required style="font-size:0.75rem; padding:2px;">
+          <button class="vote" type="submit">📅 Reschedule</button>
+        </form>
+        <button class="vote" hx-post="/emails/{{ email.email_id }}/remove" hx-target="#row-{{ email.email_id }}" hx-swap="outerHTML" hx-confirm="Remove this event from your Google Calendar?">🗑 Remove</button>
+      </div>
+    {% elif email.extraction_event_name %}
+      {% if email.user_correction is none %}
+        <button class="vote" hx-post="/emails/{{ email.email_id }}/correct" hx-vals='{"is_correct": "true"}' hx-target="#row-{{ email.email_id }}" hx-swap="outerHTML">✓ Correct</button>
+        <button class="vote" hx-post="/emails/{{ email.email_id }}/correct" hx-vals='{"is_correct": "false"}' hx-target="#row-{{ email.email_id }}" hx-swap="outerHTML">✗ Incorrect</button>
+      {% else %}
+        <span class="verdict">Marked {{ "correct" if email.user_correction else "incorrect" }}</span>
+      {% endif %}
+    {% endif %}
+  </td>
+</tr>
