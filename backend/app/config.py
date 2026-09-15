@@ -40,9 +40,12 @@ GEMINI_MIN_INTERVAL_SECONDS = float(os.getenv("GEMINI_MIN_INTERVAL_SECONDS", "13
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 # How long a "processing" claim is honored before another run is allowed to
-# retry it — covers the crash-mid-batch case. Adjustable, not a policy
-# tradeoff: just how long we wait before assuming a worker died.
-STALE_CLAIM_MINUTES = int(os.getenv("STALE_CLAIM_MINUTES", "15"))
+# retry it — covers the crash-mid-batch case. Decided 2026-09-15: 3 — real
+# GitHub Actions logs show a single Gemini extraction takes ~1s, so 3
+# minutes is still 6-10x the realistic worst-case per-email time, but
+# recovers from a crash 5x faster than the original 15-minute guess.
+# See claude/tradeoffs/stale-claim-minutes.md.
+STALE_CLAIM_MINUTES = int(os.getenv("STALE_CLAIM_MINUTES", "3"))
 
 # Length of a timed Calendar event when the deadline has an explicit time.
 # Decided 2026-09-15: 0 — a point-in-time marker exactly at the deadline
