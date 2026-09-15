@@ -117,3 +117,21 @@ class PipelineRun(Base):
     emails_processed: Mapped[int] = mapped_column(Integer, default=0)  # completed or skipped
     emails_failed: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class OAuthToken(Base):
+    """Persisted Google OAuth token (Gmail + Calendar), keyed by a fixed
+    name (currently just "google" — one account). Stored here rather than
+    only as a local file so it survives on ephemeral compute (GitHub
+    Actions runners, later Lambda) — the local file
+    (GMAIL_TOKEN_PATH) is kept in sync too, purely as a local-dev
+    convenience, but the database is the durable source of truth.
+    """
+
+    __tablename__ = "oauth_tokens"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    token_json: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
