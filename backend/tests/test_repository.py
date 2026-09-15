@@ -161,6 +161,98 @@ class TestRescheduleAndRemove:
         assert row.status == ProcessingStatus.SKIPPED  # not back to "needs review"
 
 
+class TestFindDuplicateDeadline:
+    def test_similar_name_is_matched(self, db_session):
+        repository.try_claim_email(db_session, "e1", "t1", "s1")
+        repository.mark_completed(db_session, "e1", _extraction(email_id="e1"), calendar_event_id="cal-1")
+
+        match = repository.find_duplicate_deadline(db_session, "Test event", "e2")
+
+        assert match is not None
+        assert match.email_id == "e1"
+
+    def test_dissimilar_name_is_not_matched(self, db_session):
+        repository.try_claim_email(db_session, "e1", "t1", "s1")
+        repository.mark_completed(db_session, "e1", _extraction(email_id="e1"), calendar_event_id="cal-1")
+
+        match = repository.find_duplicate_deadline(db_session, "Completely unrelated club social", "e2")
+
+        assert match is None
+
+    def test_needs_reply_rows_are_not_candidates(self, db_session):
+        repository.try_claim_email(db_session, "e1", "t1", "s1")
+        extraction = _extraction(email_id="e1", action_type="needs_reply")
+        repository.mark_completed(db_session, "e1", extraction, calendar_event_id=None)
+
+        match = repository.find_duplicate_deadline(db_session, "Test event", "e2")
+
+        assert match is None
+
+    def test_row_without_a_live_event_is_not_a_candidate(self, db_session):
+        """A queued 'needs review' deadline (never approved, no calendar
+        event) shouldn't be matched against — nothing to update or link to."""
+        repository.try_claim_email(db_session, "e1", "t1", "s1")
+        repository.mark_completed(db_session, "e1", _extraction(email_id="e1"), calendar_event_id=None)
+
+        match = repository.find_duplicate_deadline(db_session, "Test event", "e2")
+
+        assert match is None
+
+    def test_already_stale_row_is_not_a_candidate(self, db_session):
+        """A duplicate should resolve to the current row, not a stale link
+        further back in a chain of updates."""
+        repository.try_claim_email(db_session, "e1", "t1", "s1")
+        repository.mark_completed(db_session, "e1", _extraction(email_id="e1"), calendar_event_id="cal-1")
+        # e2 just needs to exist to satisfy the FK — kept unclaimed-to-COMPLETED
+        # on purpose so it isn't itself a candidate, isolating the assertion
+        # to "the stale e1 row is excluded."
+        repository.try_claim_email(db_session, "e2", "t2", "s2")
+        repository.mark_superseded(db_session, "e1", "e2")
+
+        match = repository.find_duplicate_deadline(db_session, "Test event", "e3")
+
+        assert match is None
+
+    def test_excludes_self(self, db_session):
+        repository.try_claim_email(db_session, "e1", "t1", "s1")
+        repository.mark_completed(db_session, "e1", _extraction(email_id="e1"), calendar_event_id="cal-1")
+
+        match = repository.find_duplicate_deadline(db_session, "Test event", "e1")
+
+        assert match is None
+
+
+class TestMarkSuperseded:
+    def test_marks_stale_and_links_to_new_email(self, db_session):
+        repository.try_claim_email(db_session, "e1", "t1", "s1")
+        repository.mark_completed(db_session, "e1", _extraction(email_id="e1"), calendar_event_id="cal-1")
+        repository.try_claim_email(db_session, "e2", "t2", "s2")
+
+        repository.mark_superseded(db_session, "e1", "e2")
+
+        row = db_session.get(ProcessedEmail, "e1")
+        assert row.is_stale is True
+        assert row.superseded_by_email_id == "e2"
+        # historical extraction data is untouched
+        assert row.extraction_event_name == "Test event"
+
+
+class TestMarkCompletedDuplicateFields:
+    def test_duplicate_of_and_date_changed_from_are_stored(self, db_session):
+        repository.try_claim_email(db_session, "e1", "t1", "s1")
+        repository.mark_completed(db_session, "e1", _extraction(email_id="e1"), calendar_event_id="cal-0")
+        repository.try_claim_email(db_session, "e2", "t2", "s2")
+        old_date = datetime.now(timezone.utc) + timedelta(days=5)
+        repository.mark_completed(
+            db_session, "e2", _extraction(email_id="e2"),
+            calendar_event_id="cal-1", duplicate_of_email_id="e1", date_changed_from=old_date,
+        )
+
+        row = db_session.get(ProcessedEmail, "e2")
+        assert row.duplicate_of_email_id == "e1"
+        assert row.date_changed_from == old_date
+
+
 class TestActionItemsVsRecentEmails:
     def test_deadline_items_excluded_from_action_items(self, db_session):
         repository.try_claim_email(db_session, "e1", "t1", "subject")

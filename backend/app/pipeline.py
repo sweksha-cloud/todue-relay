@@ -125,15 +125,49 @@ def _process_one(session, email) -> None:
 
     if extraction.confidence == "high" and plausible:
         service = calendar_client.get_calendar_service()
-        event_id = calendar_client.create_event(
-            service,
-            summary=extraction.event_name,
-            description=extraction.source_context,
-            deadline=extraction.deadline_date,
-            has_time=has_explicit_time(extraction.deadline_date_raw),
-            recurrence_rule=extraction.recurrence_rule,
-        )
-        repository.mark_completed(session, email.id, extraction, calendar_event_id=event_id)
+
+        # Check already-tracked deadlines before creating a new event —
+        # claude/tradeoffs/duplicate-deadline-detection.md.
+        match = repository.find_duplicate_deadline(session, extraction.event_name, email.id)
+
+        if match is not None and match.extraction_deadline_parsed.date() == extraction.deadline_date.date():
+            # Same event, same day — a repeat reminder. Don't touch the
+            # calendar, just link this row to the one that already has the
+            # live event.
+            repository.mark_completed(
+                session, email.id, extraction,
+                calendar_event_id=match.calendar_event_id,
+                duplicate_of_email_id=match.email_id,
+            )
+        elif match is not None:
+            # Same event, different day — the deadline moved. Update the
+            # existing Calendar event in place (claude/tradeoffs/deadline-changed-policy.md)
+            # and flag it on the dashboard so the change is never silent.
+            calendar_client.update_event(
+                service,
+                event_id=match.calendar_event_id,
+                summary=extraction.event_name,
+                description=extraction.source_context,
+                deadline=extraction.deadline_date,
+                has_time=has_explicit_time(extraction.deadline_date_raw),
+            )
+            repository.mark_superseded(session, match.email_id, email.id)
+            repository.mark_completed(
+                session, email.id, extraction,
+                calendar_event_id=match.calendar_event_id,
+                duplicate_of_email_id=match.email_id,
+                date_changed_from=match.extraction_deadline_parsed,
+            )
+        else:
+            event_id = calendar_client.create_event(
+                service,
+                summary=extraction.event_name,
+                description=extraction.source_context,
+                deadline=extraction.deadline_date,
+                has_time=has_explicit_time(extraction.deadline_date_raw),
+                recurrence_rule=extraction.recurrence_rule,
+            )
+            repository.mark_completed(session, email.id, extraction, calendar_event_id=event_id)
     else:
         # low confidence, or failed the plausibility check — either way,
         # surfaced as "needs review" for the dashboard's approve/decline.
