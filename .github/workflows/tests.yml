@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: only checks out code and runs pytest against a
+# throwaway service-container database — never touches the GitHub API.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest

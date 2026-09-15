@@ -6,6 +6,12 @@ on:
     - cron: "0 * * * *"
   workflow_dispatch: {}  # manual trigger, per the original spec's requirement
 
+# Least privilege: this job only reads its own code and calls external
+# APIs (Gemini, Neon, Google) via secrets — it never touches the GitHub
+# API itself, so the default token needs no permissions at all.
+permissions:
+  contents: read
+
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
