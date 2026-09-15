@@ -45,9 +45,10 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 STALE_CLAIM_MINUTES = int(os.getenv("STALE_CLAIM_MINUTES", "15"))
 
 # Length of a timed Calendar event when the deadline has an explicit time.
-# A date-only deadline becomes an all-day event instead. Adjustable, not a
-# policy tradeoff.
-EVENT_DURATION_MINUTES = int(os.getenv("EVENT_DURATION_MINUTES", "30"))
+# Decided 2026-09-15: 0 — a point-in-time marker exactly at the deadline
+# ("due at 5" -> an event at 5, not a 5:00-5:30 block). A date-only
+# deadline becomes an all-day event instead (unaffected by this value).
+EVENT_DURATION_MINUTES = int(os.getenv("EVENT_DURATION_MINUTES", "0"))
 
 # IANA timezone (e.g. "America/New_York") for timed Calendar events, which
 # require one explicitly. Empty means auto-detect from the machine's own
