@@ -1,0 +1,35 @@
+name: Run deadline pipeline
+
+on:
+  schedule:
+    # Every hour, on the hour — see claude/tradeoffs/cron-interval.md
+    - cron: "0 * * * *"
+  workflow_dispatch: {}  # manual trigger, per the original spec's requirement
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pipeline
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_MODEL: gemini-3.6-flash
+          FILTER_LEVEL: moderate
+          FETCH_WINDOW_DAYS: "2"
+          CALENDAR_TIMEZONE: America/Los_Angeles
+        run: python -m scripts.run_pipeline
