@@ -18,8 +18,23 @@ from sqlalchemy.orm import Session
 
 from app.config import STALE_CLAIM_MINUTES
 from app.date_utils import has_explicit_time
-from app.db.models import ActionType, Confidence, PipelineRun, ProcessedEmail, ProcessingStatus, RunStatus
+from app.db.models import ActionType, Confidence, OAuthToken, PipelineRun, ProcessedEmail, ProcessingStatus, RunStatus
 from app.schemas import ExtractionResult
+
+
+def get_oauth_token(session: Session, key: str) -> str | None:
+    row = session.get(OAuthToken, key)
+    return row.token_json if row else None
+
+
+def save_oauth_token(session: Session, key: str, token_json: str) -> None:
+    stmt = pg_insert(OAuthToken).values(key=key, token_json=token_json)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[OAuthToken.key],
+        set_={"token_json": token_json},
+    )
+    session.execute(stmt)
+    session.commit()
 
 
 def try_claim_email(session: Session, email_id: str, thread_id: str, email_subject: str) -> bool:
