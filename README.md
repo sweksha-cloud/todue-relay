@@ -46,13 +46,20 @@ Get one from [aistudio.google.com](https://aistudio.google.com).
 
 ### 3. Postgres
 
-Any Postgres instance works — a hosted one (Neon/Supabase) for real use,
-or local for development:
+Any real Postgres instance works — this project runs on [Neon](https://neon.tech)
+(free, scales to zero, auto-wakes with no manual restore step — see
+`claude/design-choices-defense/database-provider-choice.md` for why Neon
+specifically over Supabase/Render/Railway/self-hosted). A local instance
+works fine for development too:
 
 ```bash
 docker run -d --name deadline-tracker-pg -e POSTGRES_PASSWORD=<pw> \
   -e POSTGRES_DB=deadlines -p 55432:5432 postgres:16-alpine
 ```
+
+The OAuth token, once obtained, is stored in this database (not just a
+local file) so it survives on ephemeral compute like GitHub Actions —
+see `app/google_auth.py`.
 
 ### 4. Configure
 
@@ -87,31 +94,91 @@ performs:
 python -m scripts.tune_filter --max-results 200
 ```
 
+Run against a real inbox (79 unread emails, 2026-09-15): `moderate`
+passed ~39% through to the LLM, `strict` ~5%, `loose` ~66%. Full
+breakdown and the reasoning for keeping `moderate`:
+`claude/tradeoffs/pre-filter-aggressiveness.md`.
+
+## Testing
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+TEST_DATABASE_URL=postgresql+psycopg://postgres:test@localhost:55432/testdb \
+  python -m pytest tests/ -v
+```
+
+46 tests: date/timezone parsing, pre-filter scoring, LLM response
+validation, Calendar event construction, and the idempotency claim logic
+against real Postgres (the claim logic uses `ON CONFLICT ... RETURNING`,
+which has no SQLite equivalent, so a real Postgres instance is required —
+`TEST_DATABASE_URL` points at one, separate from the app's own
+`DATABASE_URL`). Runs automatically on every push via
+`.github/workflows/tests.yml` (a Postgres service container, no local
+setup needed in CI).
+
+## Deployment
+
+Runs on a schedule via GitHub Actions (`.github/workflows/pipeline.yml`)
+— every hour, plus manual trigger (`workflow_dispatch`). Needs two repo
+secrets set (`gh secret set GEMINI_API_KEY` / `DATABASE_URL`, or via the
+GitHub UI under Settings → Secrets and variables → Actions):
+
+- `GEMINI_API_KEY`
+- `DATABASE_URL`
+
+`CALENDAR_TIMEZONE`, `FILTER_LEVEL`, and `FETCH_WINDOW_DAYS` are set
+directly in the workflow file (not secrets, since they're not
+sensitive). See `claude/tradeoffs/cron-interval.md` and
+`claude/tradeoffs/fetch-window.md` for why those specific values.
+
+A second workflow (AWS Lambda + EventBridge) is planned as a deliberate
+future migration once this has run for real for a while — not built
+yet. See `claude/post-prod/aws-lambda-deployment.md`.
+
 ## Project layout
 
 ```
+.github/workflows/
+  pipeline.yml                      # Step 8: hourly + manual-trigger run
+  tests.yml                          # CI: runs the test suite on every push
 backend/
   app/
     gmail_client.py      # Step 1: fetch
     filters.py            # Step 1: pre-filter
-    llm_client.py          # Step 2: Gemini extraction
+    llm_client.py          # Step 2: Gemini extraction (rate-limited)
     schemas.py              # Step 2: structured-output contract
     date_utils.py             # timezone-aware date parsing (see comments —
                                #   this file has eaten more real bugs than
                                #   anything else in the project)
+    google_auth.py             # shared Gmail+Calendar OAuth, DB-backed token
     db/                        # Step 3: idempotency + audit trail (Postgres)
-    calendar_client.py          # Step 4: Calendar event creation
+    calendar_client.py          # Step 4: Calendar event creation/update/delete
     pipeline.py                  # Step 5: orchestrates all of the above
     main.py                       # Step 6/7: FastAPI + dashboard
+    view_helpers.py                # dashboard display/badge logic
     templates/                     # dashboard HTML (Jinja2 + htmx)
   scripts/
-    run_pipeline.py                # manual entry point
+    run_pipeline.py                # manual entry point (also what CI schedules)
     tune_filter.py                  # pre-filter tuning against real inbox
+  tests/                             # 46 tests, see Testing section above
 ```
 
 ## Status
 
-Steps 1-7 built and verified against a real inbox, real Gemini calls, and
-real Calendar events. Step 8 (scheduled deployment) not yet built — see
-`claude/review.md` for current decisions made/open and
-`claude/fine-tuning-todo.md` for known placeholder values and open gaps.
+Steps 1-8 built, tested, and verified against a real inbox, real Gemini
+calls, real Calendar events, and real GitHub Actions runs. An automated
+test suite (46 tests) and CI run on every push. A security review pass
+is complete (dependency CVEs patched, workflow permissions restricted,
+XSS/injection risk checked directly, no secrets in git history) — one
+accepted gap: the dashboard has no authentication, fine while run
+locally, needs addressing before any public hosting.
+
+Correctly not built yet, per the project's own plan: Step 9 (Redis-backed
+queue, explicitly deferred until the simpler version has run for real),
+the AWS Lambda migration (deliberate second phase, not started), and
+everything in `claude/post-prod/`.
+
+Full decision history: `claude/review.md` (current status),
+`claude/tradeoffs/` (every decision made, with reasoning),
+`claude/fine-tuning-todo.md` (known placeholder values still open).
