@@ -5,12 +5,21 @@ deliberately not a new logging/tracking system. Nothing here writes
 anything; it only reads and aggregates.
 
 Two known precision gaps, accepted rather than solved with new schema
-(see the conversation this was built in for the full reasoning):
-- LLM call volume is bucketed by attempt_count + a row's single
-  updated_at, so a row whose retries span a month/week boundary can
-  misattribute a call to the wrong period. Rare — only affects a stuck
-  email retried across several days — and gets rarer now that the
-  orphaned-row recovery sweep (pipeline.py) resolves those faster.
+(a dedicated last_llm_call_at / corrected_at column would fix the first
+two, but was judged not worth a schema change at this project's scale):
+- Both LLM call volume and the weekly correction rate are bucketed by a
+  row's single `updated_at`, which Postgres bumps on ANY change to the
+  row — not just the event being measured. Approving, voting on,
+  rescheduling, removing, superseding (mark_superseded), or folding a
+  follow-up into (fold_action_item) a row all move it. So:
+  - LLM usage: touching an old row pulls its whole attempt_count into
+    the current month (e.g. voting in September on an August email
+    counts that August call as a September one).
+  - Correction rate: a vote can slide into a later week if the same row
+    is touched again afterwards.
+  Both are approximate, not exact. The error is small while the only
+  user is one person mostly reviewing recent mail, and grows if old
+  items get reviewed in bulk. Treat these numbers as trends, not counts.
 - GEMINI_MONTHLY_QUOTA (app/config.py) is a placeholder; only the
   per-minute rate limit has ever been confirmed against a real 429.
 """
@@ -147,11 +156,14 @@ def run_history(session: Session, limit: int = 20) -> list[dict]:
 
 
 def weekly_correction_rate(session: Session, weeks: int = 12) -> list[dict]:
-    """Correct/total votes bucketed by the ISO week the vote was cast
-    (approximated via updated_at — the /correct endpoint only ever touches
-    that one field on a row, confirmed in app/main.py, so it's a reliable
-    proxy for "when was this voted on," not just "when was this row last
-    touched for any reason"). Oldest week first, for a left-to-right trend
+    """Correct/total votes bucketed by week, approximated via updated_at.
+
+    Approximate, not exact: updated_at is "when was this row last changed
+    for any reason," not "when was it voted on" — approving, rescheduling,
+    removing, superseding, or folding a follow-up into the row all bump it
+    too (see the module docstring), so a vote can land in a later week than
+    the one it was cast in. Fine for a trend line; don't read a single
+    week's number as precise. Oldest week first, for a left-to-right trend
     line/table.
     """
     week_col = func.date_trunc("week", ProcessedEmail.updated_at)
@@ -183,10 +195,11 @@ def weekly_correction_rate(session: Session, weeks: int = 12) -> list[dict]:
 def monthly_llm_usage(session: Session) -> dict:
     """Approximate LLM call volume for the current calendar month — see
     the precision caveat in this module's docstring. `attempt_count` is
-    summed across every row touched this month, which correctly captures
-    the overwhelming majority (an email attempted once, same day it
-    arrives) at the cost of occasionally misattributing a multi-day
-    retry's earlier attempts to this month instead of a prior one.
+    summed across every row whose `updated_at` falls this month, which is
+    right for the common case (an email attempted once, the day it
+    arrives, then left alone) but overcounts whenever an older row is
+    touched again this month (a vote, an approval, a supersede, a fold) —
+    its earlier attempts get attributed to this month.
 
     Also projects an end-of-month total by linearly extrapolating the
     current daily rate (calls so far / days elapsed * days in month) —
