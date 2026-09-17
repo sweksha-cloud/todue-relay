@@ -44,7 +44,7 @@ def run_pipeline() -> dict:
     """
     session = get_session()
     run = repository.start_run(session)
-    fetched = processed = failed = 0
+    fetched = processed = failed = filtered_out = already_terminal = 0
 
     try:
         service = get_gmail_service()
@@ -62,6 +62,7 @@ def run_pipeline() -> dict:
 
         for email in messages:
             if email.id in terminal_ids:
+                already_terminal += 1
                 continue  # already completed/skipped in a prior run
 
             outcome = _claim_and_process(session, email)
@@ -69,6 +70,8 @@ def run_pipeline() -> dict:
                 processed += 1
             elif outcome == "failed":
                 failed += 1
+            elif outcome == "filtered_out":
+                filtered_out += 1
 
         # Recovery sweep: a stuck PROCESSING (worker crashed) or FAILED
         # (eligible for retry) row normally gets picked back up once its
@@ -92,6 +95,8 @@ def run_pipeline() -> dict:
                     processed += 1
                 elif outcome == "failed":
                     failed += 1
+                elif outcome == "filtered_out":
+                    filtered_out += 1
 
         repository.finish_run(
             session,
@@ -100,6 +105,8 @@ def run_pipeline() -> dict:
             emails_fetched=fetched,
             emails_processed=processed,
             emails_failed=failed,
+            emails_filtered_out=filtered_out,
+            emails_already_terminal=already_terminal,
         )
     except Exception as e:
         logger.exception("Pipeline run failed")
@@ -110,22 +117,32 @@ def run_pipeline() -> dict:
             emails_fetched=fetched,
             emails_processed=processed,
             emails_failed=failed,
+            emails_filtered_out=filtered_out,
+            emails_already_terminal=already_terminal,
             error_message=f"{type(e).__name__}: {e}",
         )
         raise
     finally:
         session.close()
 
-    return {"fetched": fetched, "processed": processed, "failed": failed}
+    return {
+        "fetched": fetched,
+        "processed": processed,
+        "failed": failed,
+        "filtered_out": filtered_out,
+        "already_terminal": already_terminal,
+    }
 
 
 def _claim_and_process(session, email) -> str:
     """Shared by the normal fetch loop and the stale-recovery sweep: filter,
     claim, process, and isolate a failure to just this email.
 
-    Returns "processed", "failed", or "skipped" (a calendar invite, didn't
-    pass the pre-filter, or already claimed/terminal elsewhere) — the
-    caller tallies the first two.
+    Returns "processed", "failed", "filtered_out" (rejected by the
+    content-based pre-filter specifically — the caller tallies this
+    separately, it's what filter-pass-rate/anomaly tracking cares about),
+    or "skipped" (a calendar invite, or already claimed/terminal
+    elsewhere — deliberate exclusions, not a filter signal).
     """
     if email.has_calendar_invite:
         # A real .ics calendar invite — Gmail/Calendar already surfaces
@@ -135,10 +152,13 @@ def _claim_and_process(session, email) -> str:
         # already handled — see gmail_client._has_calendar_invite and
         # claude/tradeoffs/calendar-invite-emails.md. Never even claimed,
         # same cheapest-possible-skip pattern as the pre-filter below.
+        # Kept out of "filtered_out" below on purpose: a batch of invites
+        # arriving is an unrelated category, not a pre-filter regression
+        # signal, and would otherwise confound the anomaly flag.
         return "skipped"
 
     if not is_deadline_candidate(email.subject, email.body_text):
-        return "skipped"  # pre-filter: never even claimed, cheapest possible skip
+        return "filtered_out"  # pre-filter: never even claimed, cheapest possible skip
 
     if not repository.try_claim_email(session, email.id, email.thread_id, email.subject):
         return "skipped"  # claimed elsewhere, or a live attempt already in flight

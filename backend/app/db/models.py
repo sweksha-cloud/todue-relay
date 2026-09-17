@@ -133,6 +133,19 @@ class PipelineRun(Base):
     emails_fetched: Mapped[int] = mapped_column(Integer, default=0)
     emails_processed: Mapped[int] = mapped_column(Integer, default=0)  # completed or skipped
     emails_failed: Mapped[int] = mapped_column(Integer, default=0)
+    # Of emails_fetched: how many never even got claimed, and why. Added
+    # for the observability layer (2026-09-18) — the pre-filter's "never
+    # even claimed, cheapest possible skip" design means a filtered-out
+    # email otherwise leaves zero trace anywhere, so filter-pass-rate
+    # tracking and the run-to-run anomaly flag both need this recorded
+    # directly; it can't be reconstructed after the fact from anything else.
+    emails_filtered_out: Mapped[int] = mapped_column(Integer, default=0)
+    # Already COMPLETED/SKIPPED from a prior run — fetched again (still
+    # within FETCH_WINDOW_DAYS/unread) but not re-claimed. Tracked
+    # separately from emails_filtered_out so "filter pass rate" isn't
+    # distorted by a run that happens to re-see a lot of old, already-done
+    # mail rather than genuinely rejecting new mail.
+    emails_already_terminal: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 

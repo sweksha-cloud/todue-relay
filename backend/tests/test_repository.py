@@ -6,7 +6,7 @@ Needs real Postgres (see conftest.py) — the claim logic uses
 from datetime import datetime, timedelta, timezone
 
 from app.db import repository
-from app.db.models import ProcessedEmail, ProcessingStatus
+from app.db.models import PipelineRun, ProcessedEmail, ProcessingStatus, RunStatus
 from app.schemas import ExtractionResult
 
 
@@ -401,3 +401,37 @@ class TestActionItemsVsRecentEmails:
 
         assert repository.list_recent_emails(db_session) == []
         assert len(repository.list_action_items(db_session)) == 1
+
+
+class TestFinishRunFilterCounts:
+    """Observability layer (2026-09-18): filter pass/fail is never
+    persisted anywhere else, so these two counts on PipelineRun are the
+    only record of what the pre-filter rejected each run.
+    """
+
+    def test_filtered_out_and_already_terminal_are_stored(self, db_session):
+        run = repository.start_run(db_session)
+
+        repository.finish_run(
+            db_session, run.id, status=RunStatus.SUCCESS,
+            emails_fetched=10, emails_processed=3, emails_failed=1,
+            emails_filtered_out=5, emails_already_terminal=1,
+        )
+
+        row = db_session.get(PipelineRun, run.id)
+        assert row.emails_filtered_out == 5
+        assert row.emails_already_terminal == 1
+
+    def test_defaults_to_zero_when_omitted(self, db_session):
+        """Callers that don't pass these (none currently, but defends
+        against a future one) shouldn't leave the row in a null state."""
+        run = repository.start_run(db_session)
+
+        repository.finish_run(
+            db_session, run.id, status=RunStatus.SUCCESS,
+            emails_fetched=1, emails_processed=1, emails_failed=0,
+        )
+
+        row = db_session.get(PipelineRun, run.id)
+        assert row.emails_filtered_out == 0
+        assert row.emails_already_terminal == 0
