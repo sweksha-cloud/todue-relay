@@ -32,6 +32,75 @@ class TestParseDeadlineDate:
         dt = parse_deadline_date("September 20, 2026 at 5:00 PM EST")
         assert dt.utcoffset().total_seconds() == -5 * 3600
 
+    def test_spelled_out_region_name_resolved_correctly(self):
+        """Confirmed real bug (2026-09-17): the LLM wrote 'Eastern' instead
+        of 'EST'/'EDT'. dateutil never even considers 'Eastern' a tz-name
+        candidate (tokens over 5 chars are ignored), so it silently fell
+        back to the local machine's zone (Pacific) — created a Calendar
+        event 3 hours off with no warning.
+        """
+        dt = parse_deadline_date("September 15, 2026 at 7:00 PM Eastern")
+        assert dt.utcoffset().total_seconds() == -4 * 3600  # EDT in September
+
+        dt_winter = parse_deadline_date("January 15, 2026 at 7:00 PM Eastern")
+        assert dt_winter.utcoffset().total_seconds() == -5 * 3600  # EST in January
+
+    def test_spelled_out_standard_time_uses_fixed_offset(self):
+        dt = parse_deadline_date("September 15, 2026 at 7:00 PM Eastern Standard Time")
+        assert dt.utcoffset().total_seconds() == -5 * 3600
+
+    def test_bare_ct_abbreviation_resolved_correctly(self):
+        """Confirmed real bug (2026-09-18): a live Calendar event was
+        created 5 hours off because bare 'CT' (as opposed to 'CST'/'CDT')
+        wasn't in the original abbreviation table and silently fell back
+        to the local machine's zone.
+        """
+        dt = parse_deadline_date("September 24, 2026 at 11:59 p.m. CT")
+        assert dt.utcoffset().total_seconds() == -5 * 3600  # CDT in September
+
+    def test_utc_offset_sign_is_not_inverted(self):
+        """dateutil resolves 'GMT+2'/'UTC-5' on its own, but backwards —
+        POSIX TZ-string convention, where 'GMT+2' means 2 hours *west* of
+        UTC, not how anyone actually writes it in an email. Confirmed
+        directly: unpatched dateutil parses 'GMT+2' as UTC-02:00.
+        """
+        dt = parse_deadline_date("September 15, 2026 at 7:00 PM GMT+2")
+        assert dt.utcoffset().total_seconds() == 2 * 3600
+
+        dt2 = parse_deadline_date("September 15, 2026 at 7:00 PM UTC-5")
+        assert dt2.utcoffset().total_seconds() == -5 * 3600
+
+    def test_utc_offset_with_minutes(self):
+        dt = parse_deadline_date("September 15, 2026 at 7:00 PM UTC+5:30")
+        assert dt.utcoffset().total_seconds() == 5.5 * 3600
+
+    def test_non_us_named_zones_resolved_correctly(self):
+        assert parse_deadline_date(
+            "September 15, 2026 at 7:00 PM Central European Time"
+        ).utcoffset().total_seconds() == 1 * 3600
+        assert parse_deadline_date(
+            "September 15, 2026 at 7:00 PM CEST"
+        ).utcoffset().total_seconds() == 2 * 3600
+        assert parse_deadline_date(
+            "September 15, 2026 at 7:00 PM India Standard Time"
+        ).utcoffset().total_seconds() == 5.5 * 3600
+        assert parse_deadline_date(
+            "September 15, 2026 at 7:00 PM Japan Standard Time"
+        ).utcoffset().total_seconds() == 9 * 3600
+
+    def test_non_us_multiword_zone_does_not_corrupt_bare_region_match(self):
+        """'Central European Time' contains the word 'Central' — make sure
+        it's substituted as a whole phrase before the bare US-region
+        pattern gets a chance to match just 'Central' out of the middle of
+        it and corrupt the rest.
+        """
+        dt = parse_deadline_date("September 15, 2026 at 7:00 PM Central European Time")
+        assert dt.utcoffset().total_seconds() == 1 * 3600  # CET, not US Central
+
+        # bare US "Central" must still resolve correctly on its own
+        dt2 = parse_deadline_date("September 15, 2026 at 7:00 PM Central")
+        assert dt2.utcoffset().total_seconds() == -5 * 3600  # CDT in September
+
     def test_unrecognized_abbreviation_falls_back_without_crashing(self):
         """Best-effort fallback for a genuinely unresolvable zone — should
         not raise, even though it can't be fully correct.
