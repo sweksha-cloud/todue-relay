@@ -253,13 +253,21 @@ def mark_skipped(session: Session, email_id: str, reason: str) -> None:
     session.commit()
 
 
-def mark_failed(session: Session, email_id: str, error: str) -> None:
+def mark_failed(session: Session, email_id: str, error: str, *, count_attempt: bool = True) -> None:
+    """count_attempt=False refunds the attempt try_claim_email just counted,
+    for a failure that isn't the email's fault (an API rate-limit 429) —
+    otherwise a quota outage would burn through MAX_ATTEMPTS_PER_EMAIL and
+    permanently park good emails, when the daily quota only resets at
+    midnight Pacific.
+    """
     row = session.get(ProcessedEmail, email_id)
     if row is None:
         raise ValueError(f"No claimed row for {email_id}; call try_claim_email first")
 
     row.status = ProcessingStatus.FAILED
     row.error_message = error
+    if not count_attempt:
+        row.attempt_count = max(0, row.attempt_count - 1)
     session.commit()
 
 

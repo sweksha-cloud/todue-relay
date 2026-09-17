@@ -11,7 +11,7 @@ import time
 from functools import lru_cache
 
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 
 from app.config import GEMINI_API_KEY, GEMINI_MIN_INTERVAL_SECONDS, GEMINI_MODEL
 from app.gmail_client import EmailMessage
@@ -20,6 +20,15 @@ from app.schemas import ExtractionResult, RawExtraction, parse_llm_response
 
 _rate_limit_lock = threading.Lock()
 _last_call_at: float = 0.0
+
+
+class LLMRateLimitError(Exception):
+    """The API rejected the call with a 429 — a per-minute or per-day quota
+    was hit. Says nothing about the email itself (a retry after the quota
+    resets will likely succeed), so the pipeline does not count it toward
+    MAX_ATTEMPTS_PER_EMAIL. The message keeps the API's full error text,
+    including the quotaId/quotaValue that shows *which* limit was hit.
+    """
 
 
 def _wait_for_rate_limit() -> None:
@@ -53,13 +62,18 @@ def extract_deadline(email: EmailMessage) -> ExtractionResult:
     API failure (network, auth, rate limit), which is left to propagate as-is.
     """
     _wait_for_rate_limit()
-    response = _get_client().models.generate_content(
-        model=GEMINI_MODEL,
-        contents=build_extraction_prompt(email),
-        config=types.GenerateContentConfig(
-            system_instruction=EXTRACTION_SYSTEM_PROMPT,
-            response_mime_type="application/json",
-            response_schema=RawExtraction,
-        ),
-    )
+    try:
+        response = _get_client().models.generate_content(
+            model=GEMINI_MODEL,
+            contents=build_extraction_prompt(email),
+            config=types.GenerateContentConfig(
+                system_instruction=EXTRACTION_SYSTEM_PROMPT,
+                response_mime_type="application/json",
+                response_schema=RawExtraction,
+            ),
+        )
+    except errors.ClientError as e:
+        if e.code == 429:
+            raise LLMRateLimitError(str(e)) from e
+        raise
     return parse_llm_response(response.text)
