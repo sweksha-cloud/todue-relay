@@ -87,3 +87,26 @@ PLAUSIBLE_MAX_FUTURE_DAYS = int(os.getenv("PLAUSIBLE_MAX_FUTURE_DAYS", "365"))
 DUPLICATE_EVENT_NAME_SIMILARITY_THRESHOLD = float(
     os.getenv("DUPLICATE_EVENT_NAME_SIMILARITY_THRESHOLD", "0.7")
 )
+
+# Observability layer (2026-09-18, app/metrics.py). A run's filter-pass-rate
+# is flagged as anomalous if it deviates from the trailing-7-run average by
+# more than this many percentage points (0-1 scale) — e.g. 0.25 = a 25pt
+# swing. Untuned placeholder, same "pick something reasonable, revisit with
+# real data" status as DUPLICATE_EVENT_NAME_SIMILARITY_THRESHOLD above.
+FILTER_PASS_RATE_ANOMALY_THRESHOLD = float(
+    os.getenv("FILTER_PASS_RATE_ANOMALY_THRESHOLD", "0.25")
+)
+# Minimum emails a run must have actually offered to the filter (fetched
+# minus already-terminal) before its pass rate is even eligible to be
+# flagged — a 1-email run passing or failing is 0%/100% by pure chance,
+# not a signal.
+FILTER_ANOMALY_MIN_SAMPLE_SIZE = int(os.getenv("FILTER_ANOMALY_MIN_SAMPLE_SIZE", "5"))
+
+# Gemini free-tier MONTHLY/DAILY request cap — genuinely unknown at the
+# time this was added; only the per-minute limit (5 req/min, see
+# GEMINI_MIN_INTERVAL_SECONDS above) has ever been confirmed against a
+# real 429. This is a placeholder so the usage-vs-quota display has
+# *something* to divide by — treat the resulting percentage as
+# directional only until this is replaced with a real number from your
+# Gemini plan/console.
+GEMINI_MONTHLY_QUOTA = int(os.getenv("GEMINI_MONTHLY_QUOTA", "1500"))

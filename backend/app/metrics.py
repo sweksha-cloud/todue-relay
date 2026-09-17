@@ -1,0 +1,142 @@
+"""Observability layer (2026-09-18): aggregation queries over data the
+pipeline already writes to Postgres for its own operational reasons
+(idempotency tracking, the run-status banner, the correction-rate stat) —
+deliberately not a new logging/tracking system. Nothing here writes
+anything; it only reads and aggregates.
+
+Two known precision gaps, accepted rather than solved with new schema
+(see the conversation this was built in for the full reasoning):
+- LLM call volume is bucketed by attempt_count + a row's single
+  updated_at, so a row whose retries span a month/week boundary can
+  misattribute a call to the wrong period. Rare — only affects a stuck
+  email retried across several days — and gets rarer now that the
+  orphaned-row recovery sweep (pipeline.py) resolves those faster.
+- GEMINI_MONTHLY_QUOTA (app/config.py) is a placeholder; only the
+  per-minute rate limit has ever been confirmed against a real 429.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from sqlalchemy import case, func, select
+from sqlalchemy.orm import Session
+
+from app.config import (
+    FILTER_ANOMALY_MIN_SAMPLE_SIZE,
+    FILTER_PASS_RATE_ANOMALY_THRESHOLD,
+    GEMINI_MONTHLY_QUOTA,
+)
+from app.db.models import PipelineRun, ProcessedEmail
+
+
+def _filter_pass_rate(run: PipelineRun) -> float | None:
+    """Of the emails this run actually offered to the pre-filter (fetched
+    minus ones already known from a prior run, which the filter never even
+    saw), what fraction passed. None when there was nothing to evaluate.
+    """
+    evaluated = run.emails_fetched - run.emails_already_terminal
+    if evaluated <= 0:
+        return None
+    return (evaluated - run.emails_filtered_out) / evaluated
+
+
+def run_history(session: Session, limit: int = 20) -> list[dict]:
+    """Most recent runs, each with its filter-pass-rate and whether that
+    rate is anomalous versus the trailing average of the runs before it
+    (FILTER_PASS_RATE_ANOMALY_THRESHOLD, FILTER_ANOMALY_MIN_SAMPLE_SIZE —
+    app/config.py). Computed newest-first, since each run's "trailing
+    average" needs the runs before it, then returned newest-first to
+    match every other list on the dashboard.
+    """
+    stmt = select(PipelineRun).order_by(PipelineRun.started_at.desc()).limit(limit + FILTER_ANOMALY_MIN_SAMPLE_SIZE)
+    runs = list(session.execute(stmt).scalars().all())
+    runs.reverse()  # oldest first, so each run's trailing window is the ones already processed
+
+    trailing_rates: list[float] = []
+    rows: list[dict] = []
+    for run in runs:
+        pass_rate = _filter_pass_rate(run)
+        evaluated = run.emails_fetched - run.emails_already_terminal
+
+        anomaly = False
+        if (
+            pass_rate is not None
+            and evaluated >= FILTER_ANOMALY_MIN_SAMPLE_SIZE
+            and len(trailing_rates) >= 3  # need at least a few runs before flagging deviation from "the average"
+        ):
+            trailing_avg = sum(trailing_rates) / len(trailing_rates)
+            anomaly = abs(pass_rate - trailing_avg) > FILTER_PASS_RATE_ANOMALY_THRESHOLD
+
+        rows.append(
+            {
+                "run": run,
+                "filter_pass_rate": pass_rate,
+                "sent_to_llm": run.emails_processed + run.emails_failed,
+                "anomaly": anomaly,
+            }
+        )
+        if pass_rate is not None and evaluated >= FILTER_ANOMALY_MIN_SAMPLE_SIZE:
+            trailing_rates.append(pass_rate)
+            trailing_rates = trailing_rates[-7:]  # trailing 7 *eligible* runs, not just the last 7 overall
+
+    rows.reverse()  # back to newest-first for display
+    return rows[:limit]
+
+
+def weekly_correction_rate(session: Session, weeks: int = 12) -> list[dict]:
+    """Correct/total votes bucketed by the ISO week the vote was cast
+    (approximated via updated_at — the /correct endpoint only ever touches
+    that one field on a row, confirmed in app/main.py, so it's a reliable
+    proxy for "when was this voted on," not just "when was this row last
+    touched for any reason"). Oldest week first, for a left-to-right trend
+    line/table.
+    """
+    week_col = func.date_trunc("week", ProcessedEmail.updated_at)
+    stmt = (
+        select(
+            week_col.label("week"),
+            func.count().label("total"),
+            func.sum(case((ProcessedEmail.user_correction.is_(True), 1), else_=0)).label("correct"),
+        )
+        .where(ProcessedEmail.user_correction.is_not(None))
+        .group_by(week_col)
+        .order_by(week_col.desc())
+        .limit(weeks)
+    )
+    rows = list(session.execute(stmt).all())
+    rows.reverse()
+
+    return [
+        {
+            "week": row.week.date(),
+            "correct": int(row.correct or 0),
+            "total": row.total,
+            "rate": (row.correct or 0) / row.total if row.total else None,
+        }
+        for row in rows
+    ]
+
+
+def monthly_llm_usage(session: Session) -> dict:
+    """Approximate LLM call volume for the current calendar month — see
+    the precision caveat in this module's docstring. `attempt_count` is
+    summed across every row touched this month, which correctly captures
+    the overwhelming majority (an email attempted once, same day it
+    arrives) at the cost of occasionally misattributing a multi-day
+    retry's earlier attempts to this month instead of a prior one.
+    """
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    stmt = select(func.coalesce(func.sum(ProcessedEmail.attempt_count), 0)).where(
+        ProcessedEmail.updated_at >= month_start
+    )
+    calls_this_month = session.execute(stmt).scalar_one()
+
+    return {
+        "calls": calls_this_month,
+        "quota": GEMINI_MONTHLY_QUOTA,
+        "pct": (calls_this_month / GEMINI_MONTHLY_QUOTA * 100) if GEMINI_MONTHLY_QUOTA else None,
+        "month_start": month_start.date(),
+    }

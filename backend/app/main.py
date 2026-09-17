@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from app import calendar_client
+from app import calendar_client, metrics
 from app.date_utils import detect_local_timezone, to_local
 from app.db import repository
 from app.db.models import Base, ProcessedEmail, ProcessingStatus
@@ -88,6 +88,22 @@ def dashboard(
             "total_pages": total_pages,
             "action_page": action_page,
             "total_action_pages": total_action_pages,
+        },
+    )
+
+
+@app.get("/metrics", response_class=HTMLResponse)
+def metrics_page(request: Request, db: Session = Depends(get_db)):
+    """Observability layer (2026-09-18): a thin read-only view over
+    aggregates in app/metrics.py — nothing here writes anything.
+    """
+    return templates.TemplateResponse(
+        request,
+        "metrics.html",
+        {
+            "run_history": metrics.run_history(db),
+            "weekly_correction_rate": metrics.weekly_correction_rate(db),
+            "llm_usage": metrics.monthly_llm_usage(db),
         },
     )
 
