@@ -47,6 +47,16 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 # See claude/tradeoffs/stale-claim-minutes.md.
 STALE_CLAIM_MINUTES = int(os.getenv("STALE_CLAIM_MINUTES", "3"))
 
+# Retry cap for an email whose extraction keeps FAILING (an error caught
+# per-email, e.g. an unparseable date or a bad LLM response). Without a cap,
+# a deterministic failure re-calls Gemini every run forever. Once a FAILED
+# row's attempt_count reaches this, it is no longer reclaimed — it stays
+# FAILED (still visible on the dashboard, error message intact), just no
+# longer retried. Untuned placeholder: 5 hourly attempts rides out a
+# multi-hour Gemini/network outage without giving up early. Does not cap the
+# stale-PROCESSING (worker hard-crash) reclaim — see repository.try_claim_email.
+MAX_ATTEMPTS_PER_EMAIL = int(os.getenv("MAX_ATTEMPTS_PER_EMAIL", "5"))
+
 # Length of a timed Calendar event when the deadline has an explicit time.
 # Decided 2026-09-15: 0 — a point-in-time marker exactly at the deadline
 # ("due at 5" -> an event at 5, not a 5:00-5:30 block). A date-only
