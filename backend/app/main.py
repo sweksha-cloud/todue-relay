@@ -96,11 +96,16 @@ def _group_by_day(rows: list) -> list[tuple]:
     """[(day, [rows that day]), ...], newest day first. Rows already come
     in newest-first order from the query, so this just needs to preserve
     that grouping without re-sorting.
+
+    Groups by updated_at, not created_at — list_action_items orders by the
+    same field, so a folded-into action item (fold_action_item bumps
+    updated_at when a follow-up email arrives) resurfaces under today
+    instead of staying pinned under whatever day it was first seen.
     """
     groups: dict = {}
     order: list = []
     for row in rows:
-        day = to_local(row.created_at).date()
+        day = to_local(row.updated_at).date()
         if day not in groups:
             groups[day] = []
             order.append(day)
