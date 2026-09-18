@@ -164,57 +164,93 @@ class TestWeeklyCorrectionRate:
         assert weeks == []
 
 
-class TestMonthlyLlmUsage:
-    def test_sums_attempt_count_for_rows_touched_this_month(self, db_session):
-        repository.try_claim_email(db_session, "e1", "t1", "s1")  # attempt_count=1
-        repository.try_claim_email(db_session, "e2", "t2", "s2")  # attempt_count=1
-        db_session.execute(
-            ProcessedEmail.__table__.update().where(ProcessedEmail.email_id == "e2").values(
-                status="failed", claimed_at=datetime.now(timezone.utc) - timedelta(minutes=10)
-            )
-        )
-        repository.try_claim_email(db_session, "e2", "t2", "s2")  # reclaimed -> attempt_count=2
+class _FixedPacificNow(datetime):
+    """Freezes metrics.datetime.now() at 2026-09-18 10:00 Pacific."""
 
-        usage = metrics.monthly_llm_usage(db_session)
+    @classmethod
+    def now(cls, tz=None):
+        return datetime(2026, 9, 18, 10, 0, tzinfo=tz)
 
-        assert usage["calls"] == 3  # 1 (e1) + 2 (e2)
+
+def _run_started_at(db_session, started_at, processed, failed):
+    run = repository.start_run(db_session)
+    repository.finish_run(
+        db_session, run.id, status=RunStatus.SUCCESS,
+        emails_fetched=processed + failed, emails_processed=processed, emails_failed=failed,
+    )
+    row = db_session.get(type(run), run.id)
+    row.started_at = started_at
+    db_session.commit()
+
+
+class TestDailyLlmUsage:
+    def test_sums_processed_plus_failed_across_todays_runs(self, db_session):
+        _run(db_session, emails_processed=3, emails_failed=1)  # 4 calls
+        _run(db_session, emails_processed=2, emails_failed=0)  # 2 calls
+
+        usage = metrics.daily_llm_usage(db_session)
+
+        assert usage["calls"] == 6
         assert usage["quota"] > 0
         assert usage["pct"] == usage["calls"] / usage["quota"] * 100
 
-    def test_warning_flags_when_pct_crosses_threshold(self, db_session, monkeypatch):
-        monkeypatch.setattr(metrics, "GEMINI_MONTHLY_QUOTA", 10)
-        monkeypatch.setattr(metrics, "LLM_USAGE_WARNING_THRESHOLD_PCT", 80)
-        for i in range(9):
-            repository.try_claim_email(db_session, f"e{i}", f"t{i}", f"s{i}")  # 9 calls / 10 quota = 90%
+    def test_excludes_runs_from_before_today(self, db_session):
+        _run(db_session, emails_processed=2, emails_failed=0)  # today
+        _run_started_at(db_session, datetime.now(timezone.utc) - timedelta(days=2), processed=9, failed=9)
 
-        usage = metrics.monthly_llm_usage(db_session)
+        assert metrics.daily_llm_usage(db_session)["calls"] == 2
+
+    def test_day_boundary_is_midnight_pacific_not_utc(self, db_session, monkeypatch):
+        """Frozen "now" is 10:00 PT on Sep 18. A run at 23:30 PT on Sep 17
+        is 06:30 UTC on Sep 18 — same UTC date as now, but still *yesterday*
+        for Gemini's quota, so it must not count. A run at 00:30 PT Sep 18
+        (07:30 UTC) is today and must.
+        """
+        monkeypatch.setattr(metrics, "datetime", _FixedPacificNow)
+        _run_started_at(db_session, datetime(2026, 9, 18, 6, 30, tzinfo=timezone.utc), processed=5, failed=0)  # 23:30 PT Sep 17
+        _run_started_at(db_session, datetime(2026, 9, 18, 7, 30, tzinfo=timezone.utc), processed=2, failed=0)  # 00:30 PT Sep 18
+
+        usage = metrics.daily_llm_usage(db_session)
+
+        assert usage["calls"] == 2
+        assert usage["resets_at"] == datetime(2026, 9, 19, 0, 0, tzinfo=metrics.QUOTA_RESET_TZ)
+
+    def test_month_total_includes_earlier_days_but_daily_does_not(self, db_session, monkeypatch):
+        monkeypatch.setattr(metrics, "datetime", _FixedPacificNow)
+        _run_started_at(db_session, datetime(2026, 9, 3, 18, 0, tzinfo=timezone.utc), processed=7, failed=0)  # earlier this month
+        _run_started_at(db_session, datetime(2026, 9, 18, 17, 0, tzinfo=timezone.utc), processed=2, failed=0)  # today
+
+        usage = metrics.daily_llm_usage(db_session)
+
+        assert usage["calls"] == 2
+        assert usage["calls_this_month"] == 9
+
+    def test_voting_on_an_old_row_no_longer_inflates_usage(self, db_session):
+        """Regression for the updated_at problem: this count used to come
+        from ProcessedEmail.attempt_count bucketed by updated_at, so touching
+        an old row (a vote) pulled its attempts into today.
+        """
+        repository.try_claim_email(db_session, "old", "t1", "s1")
+        repository.mark_completed(db_session, "old", _extraction(email_id="old"), calendar_event_id="c1")
+        _run_started_at(db_session, datetime.now(timezone.utc) - timedelta(days=3), processed=1, failed=0)
+
+        repository.set_correction(db_session, "old", True)  # bumps the row's updated_at to now
+
+        assert metrics.daily_llm_usage(db_session)["calls"] == 0
+
+    def test_warning_flags_when_pct_crosses_threshold(self, db_session, monkeypatch):
+        monkeypatch.setattr(metrics, "GEMINI_DAILY_QUOTA", 10)
+        monkeypatch.setattr(metrics, "LLM_USAGE_WARNING_THRESHOLD_PCT", 80)
+        _run(db_session, emails_processed=9, emails_failed=0)  # 9 / 10 = 90%
+
+        usage = metrics.daily_llm_usage(db_session)
 
         assert usage["pct"] == 90.0
         assert usage["warning"] is True
 
     def test_no_warning_below_threshold(self, db_session, monkeypatch):
-        monkeypatch.setattr(metrics, "GEMINI_MONTHLY_QUOTA", 100)
+        monkeypatch.setattr(metrics, "GEMINI_DAILY_QUOTA", 100)
         monkeypatch.setattr(metrics, "LLM_USAGE_WARNING_THRESHOLD_PCT", 80)
-        repository.try_claim_email(db_session, "e1", "t1", "s1")  # 1 / 100 = 1%
+        _run(db_session, emails_processed=1, emails_failed=0)  # 1%
 
-        usage = metrics.monthly_llm_usage(db_session)
-
-        assert usage["warning"] is False
-
-    def test_projection_extrapolates_current_rate_across_the_month(self, db_session, monkeypatch):
-        class _FixedDateTime(datetime):
-            @classmethod
-            def now(cls, tz=None):
-                return datetime(2026, 9, 10, 12, 0, tzinfo=tz)  # day 10 of a 30-day month
-
-        monkeypatch.setattr(metrics, "datetime", _FixedDateTime)
-        monkeypatch.setattr(metrics, "GEMINI_MONTHLY_QUOTA", 100)
-        for i in range(20):  # 20 calls in the first 10 days -> 2/day
-            repository.try_claim_email(db_session, f"e{i}", f"t{i}", f"s{i}")
-
-        usage = metrics.monthly_llm_usage(db_session)
-
-        assert usage["days_elapsed"] == 10
-        assert usage["days_in_month"] == 30
-        assert usage["projected_calls"] == 60  # 20 / 10 * 30
-        assert usage["projected_pct"] == 60.0
+        assert metrics.daily_llm_usage(db_session)["warning"] is False
