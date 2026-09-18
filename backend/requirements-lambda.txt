@@ -1,0 +1,17 @@
+# Dependencies for the AWS Lambda package (lambda_handler.py) — the pipeline
+# only. The dashboard's packages (fastapi, uvicorn, Jinja2, python-multipart)
+# are deliberately absent: Lambda never serves the dashboard, and leaving
+# them out keeps the zip small.
+#
+# Versions must match requirements.txt for every package both files list
+# (tests/test_requirements_sync.py enforces it), so Lambda runs the same
+# versions CI tests. boto3 is not listed: the Lambda Python runtime provides it.
+google-api-python-client==2.149.0
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.1
+google-genai==2.23.0
+python-dotenv==1.2.3
+pydantic==2.13.5
+python-dateutil==2.9.0.post0
+SQLAlchemy==2.0.52
+psycopg[binary]==3.2.10

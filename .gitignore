@@ -16,3 +16,6 @@ claude/
 
 # Real extracted email/deadline data — never commit
 backend/db_dumps/
+
+# Lambda deployment zip output (backend/scripts/build_lambda.sh)
+backend/build/
