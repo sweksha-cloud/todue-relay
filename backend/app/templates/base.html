@@ -85,7 +85,10 @@
 </head>
 <body>
   <div class="wrap">
-    <h1>ToDue Relay</h1>
+    <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px;">
+      <h1>ToDue Relay</h1>
+      <nav style="font-size:0.85rem;">{% block nav %}{% endblock %}</nav>
+    </div>
     {% block content %}{% endblock %}
   </div>
 </body>

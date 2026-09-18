@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block nav %}<a href="/">&larr; Dashboard</a>{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2 style="font-size:1.05rem; margin-top:0;">LLM usage this month</h2>
+  <div class="summary-row">
+    <div class="stat">
+      <div class="num">{{ llm_usage.calls }} / {{ llm_usage.quota }}</div>
+      <div class="label">calls since {{ llm_usage.month_start.strftime("%b %d") }}</div>
+    </div>
+    <div class="stat">
+      <div class="num">{{ "%.1f%%"|format(llm_usage.pct) if llm_usage.pct is not none else "—" }}</div>
+      <div class="label">of monthly quota</div>
+    </div>
+  </div>
+  <div style="background:var(--border); border-radius:999px; height:8px; margin-top:12px; overflow:hidden;">
+    <div style="background:#1a6fd1; height:100%; width:{{ llm_usage.pct|round(1) if llm_usage.pct is not none else 0 }}%;"></div>
+  </div>
+  <p class="verdict" style="margin-top:10px; margin-bottom:0;">
+    Quota is a placeholder (GEMINI_MONTHLY_QUOTA in app/config.py) — only the per-minute rate limit
+    has ever been confirmed against a real 429. Treat this percentage as directional, not exact.
+  </p>
+</div>
+
+<div class="card">
+  <h2 style="font-size:1.05rem; margin-top:0;">Weekly correction rate</h2>
+  {% if weekly_correction_rate %}
+    <div class="overflow-x">
+      <table>
+        <thead><tr><th>Week of</th><th>Correct</th><th>Total votes</th><th>Rate</th></tr></thead>
+        <tbody>
+          {% for w in weekly_correction_rate %}
+            <tr>
+              <td>{{ w.week.strftime("%b %d, %Y") }}</td>
+              <td>{{ w.correct }}</td>
+              <td>{{ w.total }}</td>
+              <td>{{ "%.0f%%"|format(w.rate * 100) if w.rate is not none else "—" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="verdict">No correction votes cast yet.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2 style="font-size:1.05rem; margin-top:0;">Recent runs</h2>
+  <p class="verdict" style="margin-top:-8px;">
+    Filter pass rate shows "—" for runs before 2026-09-18 — this tracking didn't exist yet, not a real 0%/100%.
+  </p>
+  <div class="overflow-x">
+    <table>
+      <thead>
+        <tr><th>Started</th><th>Fetched</th><th>Sent to LLM</th><th>Processed</th><th>Failed</th><th>Filter pass rate</th></tr>
+      </thead>
+      <tbody>
+        {% for r in run_history %}
+          <tr>
+            <td>{{ (r.run.started_at | to_local).strftime("%b %d, %Y %I:%M %p") }}</td>
+            <td>{{ r.run.emails_fetched }}</td>
+            <td>{{ r.sent_to_llm }}</td>
+            <td>{{ r.run.emails_processed }}</td>
+            <td>{{ r.run.emails_failed }}</td>
+            <td>
+              {{ "%.0f%%"|format(r.filter_pass_rate * 100) if r.filter_pass_rate is not none else "—" }}
+              {% if r.anomaly %}
+                <span class="badge badge-failed" title="Deviates from the trailing average by more than FILTER_PASS_RATE_ANOMALY_THRESHOLD">⚠ anomaly</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
