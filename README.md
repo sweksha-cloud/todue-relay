@@ -15,6 +15,7 @@ intentionally deferred — lives in `claude/` (gitignored, local-only):
 1. **Fetch** unread, recent Gmail messages (`app/gmail_client.py`)
 2. **Pre-filter** cheaply before any LLM call (`app/filters.py`)
 3. **Extract** structured deadline/action data via Gemini (`app/llm_client.py`)
+   — the free tier allows only **20 calls/day**, see [Gemini quota](#gemini-quota)
 4. **Route**: high-confidence deadlines auto-create a Calendar event
    (a true recurring event if the email describes a repeating obligation,
    e.g. "rent due the 1st of every month"); a deadline recognized as a
@@ -23,7 +24,13 @@ intentionally deferred — lives in `claude/` (gitignored, local-only):
    no-fixed-date items go to a review dashboard (`app/pipeline.py`)
 5. **Track** every email's outcome in Postgres for idempotency and audit
    (`app/db/`) — safe to re-run, never double-processes or double-creates
-6. **Review** via a small dashboard (`app/main.py` + `app/templates/`)
+6. **Review** via a small dashboard (`app/main.py` + `app/templates/`), plus a
+   `/metrics` page (run history, filter pass rate, Gemini usage vs. the daily
+   quota) and a **Check waiting mail** button that counts unprocessed emails
+   on demand — read-only, costs no Gemini quota
+7. **Protect the quota**: a per-day call budget stops claiming emails once the
+   day's allowance is spent, and a retry cap stops a failing email from being
+   retried forever (`app/pipeline.py`, `app/db/repository.py`)
 
 ## Setup
 
@@ -63,6 +70,20 @@ docker run -d --name deadline-tracker-pg -e POSTGRES_PASSWORD=<pw> \
 The OAuth token, once obtained, is stored in this database (not just a
 local file) so it survives on ephemeral compute like GitHub Actions —
 see `app/google_auth.py`.
+
+**Schema changes are manual.** There's no migration tool: the dashboard's
+startup runs `create_all`, which creates missing tables but never adds columns
+to an existing one. A database created before the observability counters were
+added needs them by hand (safe to re-run):
+
+```sql
+ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS emails_filtered_out INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS emails_already_terminal INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS emails_deferred INTEGER NOT NULL DEFAULT 0;
+```
+
+Run these **before** deploying code that uses a new column; the `DEFAULT 0`
+keeps older code working in the meantime.
 
 ### 4. Configure
 
@@ -106,6 +127,36 @@ passed ~39% through to the LLM, `strict` ~5%, `loose` ~66%. Full
 breakdown and the reasoning for keeping `moderate`:
 `claude/tradeoffs/pre-filter-aggressiveness.md`.
 
+## Gemini quota
+
+The free tier of `gemini-3.6-flash` allows **20 requests/day** (and 5/minute),
+per project and model — confirmed on Google AI Studio's Rate limit page. The day
+resets at **midnight Pacific**; there is no monthly cap. A dashboard card and
+`/metrics` show today's calls against it. Real runs, retries and manual runs all
+spend the same 20, so the pipeline protects it in layers:
+
+- **Per-day call budget** — once today's calls reach `GEMINI_DAILY_QUOTA` minus
+  `GEMINI_DAILY_RESERVE`, a run stops claiming emails. Those emails are
+  **deferred**: never claimed, left untouched, and picked up by a later run after
+  the reset. The dashboard banner shows how many are waiting.
+- **Retry cap** — an email that keeps failing is retried at most
+  `MAX_ATTEMPTS_PER_EMAIL` times, then stays visibly `failed`. Rate-limit (429)
+  errors don't count toward it.
+- **Dry run** — check what a run *would* do without spending anything:
+  `python -m scripts.run_pipeline --dry-run` (or the dashboard button). It reads
+  Gmail and the database and writes nothing. Use it instead of a real run to
+  verify changes.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `GEMINI_DAILY_QUOTA` | `20` | Your daily request limit (`0` turns the budget guard off) |
+| `GEMINI_DAILY_RESERVE` | `2` | Calls held back for usage the pipeline can't see |
+| `MAX_ATTEMPTS_PER_EMAIL` | `3` | Retries before a failing email is left alone |
+| `GEMINI_MIN_INTERVAL_SECONDS` | `13` | Pacing to stay under 5 requests/minute |
+
+On a paid tier, raise `GEMINI_DAILY_QUOTA`. To force one bigger run, set it for
+that run only, e.g. `GEMINI_DAILY_QUOTA=100 python -m scripts.run_pipeline`.
+
 ## Testing
 
 ```bash
@@ -115,12 +166,15 @@ TEST_DATABASE_URL=postgresql+psycopg://postgres:test@localhost:55432/testdb \
   python -m pytest tests/ -v
 ```
 
-66 tests: date/timezone parsing, pre-filter scoring, LLM response
-validation, Calendar event construction (including recurrence), duplicate-
-deadline matching, and the idempotency claim logic against real Postgres (the claim logic uses
+150 tests: date/timezone parsing, pre-filter scoring, LLM response
+validation (including 429 handling), Calendar event construction (including
+recurrence), duplicate-deadline matching, the idempotency claim logic and retry
+cap, the daily call budget and dry-run mode (driving the real `run_pipeline`
+loop with only Gmail and Gemini stubbed), the observability metrics, and the
+dashboard pages rendered against real Postgres. The claim logic uses
 `ON CONFLICT ... RETURNING`, which has no SQLite equivalent, so a real
 Postgres instance is required — `TEST_DATABASE_URL` points at one, separate
-from the app's own `DATABASE_URL`). Runs automatically on every push via
+from the app's own `DATABASE_URL`. Runs automatically on every push via
 `.github/workflows/tests.yml` (a Postgres service container, no local
 setup needed in CI).
 
@@ -138,6 +192,13 @@ GitHub UI under Settings → Secrets and variables → Actions):
 directly in the workflow file (not secrets, since they're not
 sensitive). See `claude/tradeoffs/cron-interval.md` and
 `claude/tradeoffs/fetch-window.md` for why those specific values.
+
+**Cadence:** the schedule says hourly, but GitHub treats scheduled workflows as
+best-effort — real runs were observed every 2.5-5.7 hours (about 3.7 on
+average). Correctness doesn't depend on it (processing is idempotent and the
+2-day fetch window tolerates gaps), but expect hours, not minutes, between
+runs. Running less often wouldn't save Gemini quota anyway: each email is
+processed once however often the job runs.
 
 A second workflow (AWS Lambda + EventBridge) is planned as a deliberate
 future migration once this has run for real for a while — not built
@@ -164,11 +225,12 @@ backend/
     pipeline.py                  # Step 5: orchestrates all of the above
     main.py                       # Step 6/7: FastAPI + dashboard
     view_helpers.py                # dashboard display/badge logic
+    metrics.py                     # observability: run history, usage vs. daily quota
     templates/                     # dashboard HTML (Jinja2 + htmx)
   scripts/
-    run_pipeline.py                # manual entry point (also what CI schedules)
+    run_pipeline.py                # entry point (also what CI schedules); --dry-run to preview
     tune_filter.py                  # pre-filter tuning against real inbox
-  tests/                             # 66 tests, see Testing section above
+  tests/                             # 150 tests, see Testing section above
 ```
 
 ## Status
@@ -176,11 +238,14 @@ backend/
 Steps 1-8 built, tested, and verified against a real inbox, real Gemini
 calls, real Calendar events (including true recurring events and
 duplicate-deadline handling), and real GitHub Actions runs. An automated
-test suite (66 tests) and CI run on every push. A security review pass
+test suite (150 tests) and CI run on every push. A security review pass
 is complete (dependency CVEs patched, workflow permissions restricted,
 XSS/injection risk checked directly, no secrets in git history) — one
 accepted gap: the dashboard has no authentication, fine while run
 locally, needs addressing before any public hosting.
+
+Runs within Gemini's free tier (20 requests/day) via a per-day call budget,
+a retry cap, and a read-only dry-run mode — see [Gemini quota](#gemini-quota).
 
 Correctly not built yet, per the project's own plan: Step 9 (Redis-backed
 queue, explicitly deferred until the simpler version has run for real),
