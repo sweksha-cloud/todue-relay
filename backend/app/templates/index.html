@@ -28,6 +28,30 @@
   </div>
 </div>
 
+<div class="card">
+  <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:6px;">
+    <div>
+      <strong>{{ "%.0f%%"|format(llm_usage.pct) if llm_usage.pct is not none else "—" }}</strong>
+      <span class="verdict">of monthly LLM quota ({{ llm_usage.calls }} / {{ llm_usage.quota }} calls since {{ llm_usage.month_start.strftime("%b %d") }})</span>
+    </div>
+    {% if llm_usage.warning %}
+      <span class="badge badge-failed" title="Crossed the warning threshold — see app/config.py LLM_USAGE_WARNING_THRESHOLD_PCT">⚠ high usage</span>
+    {% endif %}
+  </div>
+  <div style="background:var(--border); border-radius:999px; height:8px; margin-top:10px; overflow:hidden;">
+    <div style="background:{{ '#e5484d' if llm_usage.warning else '#1a6fd1' }}; height:100%; width:{{ llm_usage.pct|round(1) if llm_usage.pct is not none else 0 }}%;"></div>
+  </div>
+  <p class="verdict" style="margin-top:8px; margin-bottom:0;">
+    Projected end of month: ~{{ llm_usage.projected_calls }} calls
+    ({{ "%.0f%%"|format(llm_usage.projected_pct) if llm_usage.projected_pct is not none else "—" }} of quota)
+    at the current rate ({{ llm_usage.days_elapsed }} of {{ llm_usage.days_in_month }} days in).
+    {% if llm_usage.projected_warning and not llm_usage.warning %}
+      <span class="badge badge-review">⚠ on track to cross the warning threshold</span>
+    {% endif %}
+    Quota is a placeholder — <a href="/metrics">see Metrics</a> for the full breakdown.
+  </p>
+</div>
+
 <div class="card overflow-x">
   <table>
     <thead>

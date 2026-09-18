@@ -17,6 +17,7 @@ Two known precision gaps, accepted rather than solved with new schema
 
 from __future__ import annotations
 
+import calendar
 from datetime import datetime, timezone
 
 from sqlalchemy import case, func, select
@@ -26,6 +27,7 @@ from app.config import (
     FILTER_ANOMALY_MIN_SAMPLE_SIZE,
     FILTER_PASS_RATE_ANOMALY_THRESHOLD,
     GEMINI_MONTHLY_QUOTA,
+    LLM_USAGE_WARNING_THRESHOLD_PCT,
 )
 from app.db.models import ActionType, PipelineRun, ProcessedEmail, ProcessingStatus
 
@@ -185,6 +187,14 @@ def monthly_llm_usage(session: Session) -> dict:
     the overwhelming majority (an email attempted once, same day it
     arrives) at the cost of occasionally misattributing a multi-day
     retry's earlier attempts to this month instead of a prior one.
+
+    Also projects an end-of-month total by linearly extrapolating the
+    current daily rate (calls so far / days elapsed * days in month) —
+    pure arithmetic on data already computed here, no new tracking.
+    Deliberately naive: early in the month, a handful of calls on day 1
+    can extrapolate to a wildly high projection. Accepted rather than
+    smoothed — a simple, honestly-labeled estimate, not a forecasting
+    model.
     """
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -194,9 +204,22 @@ def monthly_llm_usage(session: Session) -> dict:
     )
     calls_this_month = session.execute(stmt).scalar_one()
 
+    days_in_month = calendar.monthrange(now.year, now.month)[1]
+    days_elapsed = (now.date() - month_start.date()).days + 1  # count today itself
+    projected_calls = round(calls_this_month / days_elapsed * days_in_month)
+
+    pct = (calls_this_month / GEMINI_MONTHLY_QUOTA * 100) if GEMINI_MONTHLY_QUOTA else None
+    projected_pct = (projected_calls / GEMINI_MONTHLY_QUOTA * 100) if GEMINI_MONTHLY_QUOTA else None
+
     return {
         "calls": calls_this_month,
         "quota": GEMINI_MONTHLY_QUOTA,
-        "pct": (calls_this_month / GEMINI_MONTHLY_QUOTA * 100) if GEMINI_MONTHLY_QUOTA else None,
+        "pct": pct,
+        "warning": pct is not None and pct >= LLM_USAGE_WARNING_THRESHOLD_PCT,
+        "projected_calls": projected_calls,
+        "projected_pct": projected_pct,
+        "projected_warning": projected_pct is not None and projected_pct >= LLM_USAGE_WARNING_THRESHOLD_PCT,
         "month_start": month_start.date(),
+        "days_elapsed": days_elapsed,
+        "days_in_month": days_in_month,
     }

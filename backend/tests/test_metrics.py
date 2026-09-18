@@ -180,3 +180,41 @@ class TestMonthlyLlmUsage:
         assert usage["calls"] == 3  # 1 (e1) + 2 (e2)
         assert usage["quota"] > 0
         assert usage["pct"] == usage["calls"] / usage["quota"] * 100
+
+    def test_warning_flags_when_pct_crosses_threshold(self, db_session, monkeypatch):
+        monkeypatch.setattr(metrics, "GEMINI_MONTHLY_QUOTA", 10)
+        monkeypatch.setattr(metrics, "LLM_USAGE_WARNING_THRESHOLD_PCT", 80)
+        for i in range(9):
+            repository.try_claim_email(db_session, f"e{i}", f"t{i}", f"s{i}")  # 9 calls / 10 quota = 90%
+
+        usage = metrics.monthly_llm_usage(db_session)
+
+        assert usage["pct"] == 90.0
+        assert usage["warning"] is True
+
+    def test_no_warning_below_threshold(self, db_session, monkeypatch):
+        monkeypatch.setattr(metrics, "GEMINI_MONTHLY_QUOTA", 100)
+        monkeypatch.setattr(metrics, "LLM_USAGE_WARNING_THRESHOLD_PCT", 80)
+        repository.try_claim_email(db_session, "e1", "t1", "s1")  # 1 / 100 = 1%
+
+        usage = metrics.monthly_llm_usage(db_session)
+
+        assert usage["warning"] is False
+
+    def test_projection_extrapolates_current_rate_across_the_month(self, db_session, monkeypatch):
+        class _FixedDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 9, 10, 12, 0, tzinfo=tz)  # day 10 of a 30-day month
+
+        monkeypatch.setattr(metrics, "datetime", _FixedDateTime)
+        monkeypatch.setattr(metrics, "GEMINI_MONTHLY_QUOTA", 100)
+        for i in range(20):  # 20 calls in the first 10 days -> 2/day
+            repository.try_claim_email(db_session, f"e{i}", f"t{i}", f"s{i}")
+
+        usage = metrics.monthly_llm_usage(db_session)
+
+        assert usage["days_elapsed"] == 10
+        assert usage["days_in_month"] == 30
+        assert usage["projected_calls"] == 60  # 20 / 10 * 30
+        assert usage["projected_pct"] == 60.0

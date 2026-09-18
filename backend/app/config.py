@@ -110,3 +110,9 @@ FILTER_ANOMALY_MIN_SAMPLE_SIZE = int(os.getenv("FILTER_ANOMALY_MIN_SAMPLE_SIZE",
 # directional only until this is replaced with a real number from your
 # Gemini plan/console.
 GEMINI_MONTHLY_QUOTA = int(os.getenv("GEMINI_MONTHLY_QUOTA", "1500"))
+
+# Surfaced on the main dashboard (2026-09-18), not just /metrics: flag
+# usage as a warning once it crosses this % of GEMINI_MONTHLY_QUOTA, so a
+# creeping approach to the (placeholder) limit is noticed before the
+# pipeline starts failing silently on 429s.
+LLM_USAGE_WARNING_THRESHOLD_PCT = float(os.getenv("LLM_USAGE_WARNING_THRESHOLD_PCT", "80"))
