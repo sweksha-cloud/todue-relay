@@ -86,6 +86,58 @@ class TestAnomalyFlag:
         assert rows[0]["anomaly"] is False
 
 
+class TestOutcomeCounts:
+    def test_breaks_down_deadlines_review_and_action_items(self, db_session):
+        run = repository.start_run(db_session)
+
+        # deadline with a live event -> auto-created
+        repository.try_claim_email(db_session, "e1", "t1", "s1")
+        repository.mark_completed(db_session, "e1", _extraction(email_id="e1"), calendar_event_id="cal-1")
+
+        # deadline with no event -> sitting in the review queue
+        repository.try_claim_email(db_session, "e2", "t2", "s2")
+        repository.mark_completed(db_session, "e2", _extraction(email_id="e2", confidence="low"), calendar_event_id=None)
+
+        # needs_reply, not a duplicate fold -> surfaced as a new action item
+        repository.try_claim_email(db_session, "e3", "t3", "s3")
+        needs_reply = ExtractionResult(
+            email_id="e3", event_name="Interview scheduling", deadline_date_raw=None,
+            deadline_date=None, source_context="what times work?", confidence="low", action_type="needs_reply",
+        )
+        repository.mark_completed(db_session, "e3", needs_reply, calendar_event_id=None)
+
+        # a second needs_reply folded into e3 -> must NOT count as surfaced
+        repository.try_claim_email(db_session, "e4", "t4", "s4")
+        repository.fold_action_item(db_session, "e3", "e4", "just checking in")
+        repository.mark_completed(db_session, "e4", needs_reply, calendar_event_id=None, duplicate_of_email_id="e3")
+
+        repository.finish_run(
+            db_session, run.id, status=RunStatus.SUCCESS,
+            emails_fetched=4, emails_processed=4, emails_failed=0,
+        )
+
+        rows = metrics.run_history(db_session, limit=1)
+
+        assert rows[0]["deadlines_auto_created"] == 1
+        assert rows[0]["review_queue_items"] == 1
+        assert rows[0]["action_items_surfaced"] == 1  # e4 excluded, folded into e3
+
+    def test_failed_rows_are_excluded_from_every_bucket(self, db_session):
+        run = repository.start_run(db_session)
+        repository.try_claim_email(db_session, "e1", "t1", "s1")
+        repository.mark_failed(db_session, "e1", "some error")
+        repository.finish_run(
+            db_session, run.id, status=RunStatus.SUCCESS,
+            emails_fetched=1, emails_processed=0, emails_failed=1,
+        )
+
+        rows = metrics.run_history(db_session, limit=1)
+
+        assert rows[0]["deadlines_auto_created"] == 0
+        assert rows[0]["review_queue_items"] == 0
+        assert rows[0]["action_items_surfaced"] == 0
+
+
 class TestWeeklyCorrectionRate:
     def test_buckets_votes_by_week(self, db_session):
         repository.try_claim_email(db_session, "e1", "t1", "s1")

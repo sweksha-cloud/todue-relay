@@ -27,7 +27,7 @@ from app.config import (
     FILTER_PASS_RATE_ANOMALY_THRESHOLD,
     GEMINI_MONTHLY_QUOTA,
 )
-from app.db.models import PipelineRun, ProcessedEmail
+from app.db.models import ActionType, PipelineRun, ProcessedEmail, ProcessingStatus
 
 
 def _filter_pass_rate(run: PipelineRun) -> float | None:
@@ -41,17 +41,76 @@ def _filter_pass_rate(run: PipelineRun) -> float | None:
     return (evaluated - run.emails_filtered_out) / evaluated
 
 
+def _bucket_completions_by_run(runs: list[PipelineRun], rows: list[ProcessedEmail]) -> dict[int, list[ProcessedEmail]]:
+    """Which run completed each row — approximated by whether the row's
+    completed_at falls inside that run's [started_at, finished_at] window.
+    No direct run_id column exists (see claude/tradeoffs/observability-metrics.md
+    decision 1); reliable here because only one run ever executes at a
+    time in this pipeline, so the windows never overlap.
+    """
+    buckets: dict[int, list[ProcessedEmail]] = {run.id: [] for run in runs}
+    sorted_runs = sorted(runs, key=lambda r: r.started_at)
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        if row.completed_at is None:
+            continue
+        for run in sorted_runs:
+            window_end = run.finished_at or now
+            if run.started_at <= row.completed_at <= window_end:
+                buckets[run.id].append(row)
+                break
+    return buckets
+
+
+def _outcome_counts(rows: list[ProcessedEmail]) -> dict[str, int]:
+    """Of a run's completed rows, how many became a live Calendar event
+    ("deadlines_auto_created" — covers a fresh create, a duplicate linked
+    to an existing event, and a reschedule alike, since all three end in a
+    live event either way), how many are sitting in the review queue
+    (a deadline extraction with no event yet), and how many surfaced as a
+    new action item (excludes one folded into an earlier one via
+    fold_action_item — that one never showed up as a second entry, so it
+    didn't "surface").
+    """
+    deadlines_auto_created = review_queue_items = action_items_surfaced = 0
+    for row in rows:
+        if row.extraction_action_type == ActionType.DEADLINE:
+            if row.calendar_event_id is not None:
+                deadlines_auto_created += 1
+            else:
+                review_queue_items += 1
+        elif row.extraction_action_type in (ActionType.NEEDS_REPLY, ActionType.UNCLEAR):
+            if row.duplicate_of_email_id is None:
+                action_items_surfaced += 1
+    return {
+        "deadlines_auto_created": deadlines_auto_created,
+        "review_queue_items": review_queue_items,
+        "action_items_surfaced": action_items_surfaced,
+    }
+
+
 def run_history(session: Session, limit: int = 20) -> list[dict]:
-    """Most recent runs, each with its filter-pass-rate and whether that
-    rate is anomalous versus the trailing average of the runs before it
+    """Most recent runs, each with its filter-pass-rate, whether that rate
+    is anomalous versus the trailing average of the runs before it
     (FILTER_PASS_RATE_ANOMALY_THRESHOLD, FILTER_ANOMALY_MIN_SAMPLE_SIZE —
-    app/config.py). Computed newest-first, since each run's "trailing
+    app/config.py), and how its completed emails broke down (see
+    _outcome_counts). Computed newest-first, since each run's "trailing
     average" needs the runs before it, then returned newest-first to
     match every other list on the dashboard.
     """
     stmt = select(PipelineRun).order_by(PipelineRun.started_at.desc()).limit(limit + FILTER_ANOMALY_MIN_SAMPLE_SIZE)
     runs = list(session.execute(stmt).scalars().all())
     runs.reverse()  # oldest first, so each run's trailing window is the ones already processed
+
+    completed_rows: list[ProcessedEmail] = []
+    if runs:
+        earliest_start = min(run.started_at for run in runs)
+        completed_stmt = select(ProcessedEmail).where(
+            ProcessedEmail.status == ProcessingStatus.COMPLETED,
+            ProcessedEmail.completed_at >= earliest_start,
+        )
+        completed_rows = list(session.execute(completed_stmt).scalars().all())
+    outcomes_by_run = _bucket_completions_by_run(runs, completed_rows)
 
     trailing_rates: list[float] = []
     rows: list[dict] = []
@@ -68,14 +127,15 @@ def run_history(session: Session, limit: int = 20) -> list[dict]:
             trailing_avg = sum(trailing_rates) / len(trailing_rates)
             anomaly = abs(pass_rate - trailing_avg) > FILTER_PASS_RATE_ANOMALY_THRESHOLD
 
-        rows.append(
-            {
-                "run": run,
-                "filter_pass_rate": pass_rate,
-                "sent_to_llm": run.emails_processed + run.emails_failed,
-                "anomaly": anomaly,
-            }
-        )
+        row = {
+            "run": run,
+            "filter_pass_rate": pass_rate,
+            "sent_to_llm": run.emails_processed + run.emails_failed,
+            "anomaly": anomaly,
+        }
+        row.update(_outcome_counts(outcomes_by_run.get(run.id, [])))
+        rows.append(row)
+
         if pass_rate is not None and evaluated >= FILTER_ANOMALY_MIN_SAMPLE_SIZE:
             trailing_rates.append(pass_rate)
             trailing_rates = trailing_rates[-7:]  # trailing 7 *eligible* runs, not just the last 7 overall
