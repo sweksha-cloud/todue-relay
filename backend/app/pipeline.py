@@ -77,6 +77,7 @@ def run_pipeline(*, dry_run: bool = False) -> dict:
             emails_failed=failed,
             emails_filtered_out=filtered_out,
             emails_already_terminal=already_terminal,
+            emails_deferred=deferred,
             error_message=error_message,
         )
 

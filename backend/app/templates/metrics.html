@@ -62,7 +62,7 @@
     <table>
       <thead>
         <tr>
-          <th>Started</th><th>Fetched</th><th>Sent to LLM</th><th>Failed</th>
+          <th>Started</th><th>Fetched</th><th>Sent to LLM</th><th>Failed</th><th>Deferred</th>
           <th>Deadlines added</th><th>Needs review</th><th>Action items</th>
           <th>Filter pass rate</th>
         </tr>
@@ -74,6 +74,7 @@
             <td>{{ r.run.emails_fetched }}</td>
             <td>{{ r.sent_to_llm }}</td>
             <td>{{ r.run.emails_failed }}</td>
+            <td>{{ r.run.emails_deferred or "—" }}</td>
             <td>{{ r.deadlines_auto_created }}</td>
             <td>{{ r.review_queue_items }}</td>
             <td>{{ r.action_items_surfaced }}</td>

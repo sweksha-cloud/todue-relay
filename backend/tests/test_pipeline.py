@@ -171,6 +171,18 @@ class TestDailyBudgetGuard:
         claimed = {r.email_id for r in db_session.query(ProcessedEmail).all()}
         assert claimed == {"e1", "e2"}
 
+    def test_the_deferred_count_is_recorded_on_the_run(self, harness, db_session):
+        """Deferred mail leaves no other trace (it's never claimed), so the run
+        row is the only place that can say "mail is waiting".
+        """
+        _spend(db_session, 6)  # 2 left
+        harness.emails = [_email(id=i) for i in ("e1", "e2", "e3", "e4")]
+
+        pipeline.run_pipeline()
+
+        db_session.expire_all()
+        assert repository.get_latest_run(db_session).emails_deferred == 2
+
     def test_deferred_emails_are_processed_once_budget_frees(self, harness, db_session, monkeypatch):
         _spend(db_session, 6)
         harness.emails = [_email(id=i) for i in ("e1", "e2", "e3", "e4")]

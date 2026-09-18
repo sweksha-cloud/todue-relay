@@ -458,6 +458,7 @@ def finish_run(
     emails_failed: int,
     emails_filtered_out: int = 0,
     emails_already_terminal: int = 0,
+    emails_deferred: int = 0,
     error_message: str | None = None,
 ) -> None:
     run = session.get(PipelineRun, run_id)
@@ -471,6 +472,7 @@ def finish_run(
     run.emails_failed = emails_failed
     run.emails_filtered_out = emails_filtered_out
     run.emails_already_terminal = emails_already_terminal
+    run.emails_deferred = emails_deferred
     run.error_message = error_message
     session.commit()
 
