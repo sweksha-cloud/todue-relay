@@ -134,6 +134,58 @@ class TestRetryCap:
         assert ids == ["retryable"]
 
 
+class TestWouldClaimEmail:
+    """would_claim_email is a read-only Python mirror of try_claim_email's
+    SQL WHERE clause (used by dry-run mode). If the two drift, dry-run would
+    report something the real run wouldn't do — so check it against the real
+    thing across every row state.
+    """
+
+    def _make_states(self, db_session, monkeypatch):
+        monkeypatch.setattr(repository, "MAX_ATTEMPTS_PER_EMAIL", 3)
+        # fresh: no row at all
+        # live_processing: claimed just now
+        repository.try_claim_email(db_session, "live_processing", "t", "s")
+        # stale_processing: claimed long ago (worker crashed)
+        repository.try_claim_email(db_session, "stale_processing", "t", "s")
+        row = db_session.get(ProcessedEmail, "stale_processing")
+        row.claimed_at = datetime.now(timezone.utc) - timedelta(minutes=999)
+        db_session.commit()
+        # failed under / at the retry cap
+        _fail_n_times(db_session, "failed_under_cap", 2)
+        _fail_n_times(db_session, "failed_at_cap", 3)
+        # terminal
+        repository.try_claim_email(db_session, "completed", "t", "s")
+        repository.mark_completed(db_session, "completed", _extraction(email_id="completed"), calendar_event_id="c")
+        repository.try_claim_email(db_session, "skipped", "t", "s")
+        repository.mark_skipped(db_session, "skipped", "no deadline")
+
+    def test_agrees_with_try_claim_email_in_every_state(self, db_session, monkeypatch):
+        self._make_states(db_session, monkeypatch)
+        ids = ["fresh", "live_processing", "stale_processing", "failed_under_cap",
+               "failed_at_cap", "completed", "skipped"]
+
+        predicted = {i: repository.would_claim_email(db_session, i) for i in ids}
+        actual = {i: repository.try_claim_email(db_session, i, "t", "s") for i in ids}
+
+        assert predicted == actual
+        # ...and the states genuinely differ, so this isn't vacuously all-True/all-False:
+        assert predicted == {
+            "fresh": True, "live_processing": False, "stale_processing": True,
+            "failed_under_cap": True, "failed_at_cap": False, "completed": False, "skipped": False,
+        }
+
+    def test_writes_nothing(self, db_session, monkeypatch):
+        self._make_states(db_session, monkeypatch)
+        before = {r.email_id: (r.status, r.attempt_count, r.claimed_at) for r in db_session.query(ProcessedEmail).all()}
+
+        for i in list(before) + ["fresh"]:
+            repository.would_claim_email(db_session, i)
+
+        after = {r.email_id: (r.status, r.attempt_count, r.claimed_at) for r in db_session.query(ProcessedEmail).all()}
+        assert after == before  # no row created for "fresh", none modified
+
+
 class TestMarkCompleted:
     def test_high_confidence_deadline_with_event(self, db_session):
         repository.try_claim_email(db_session, "e1", "t1", "subject")

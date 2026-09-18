@@ -40,7 +40,7 @@ from app.llm_client import LLMRateLimitError, extract_deadline
 logger = logging.getLogger(__name__)
 
 
-def run_pipeline() -> dict:
+def run_pipeline(*, dry_run: bool = False) -> dict:
     """Process up to MAX_EMAILS_PER_RUN recent emails end-to-end. Returns a
     summary dict; always records a PipelineRun row, success or failure.
 
@@ -50,10 +50,35 @@ def run_pipeline() -> dict:
     later run (after the midnight-Pacific reset) picks it up while it's still
     unread and inside FETCH_WINDOW_DAYS. Applies to every caller, manual runs
     included. Deferral is logged and returned but not persisted anywhere.
+
+    dry_run (claude/tradeoffs/dry-run-mode.md): report what a real run WOULD
+    do — which emails it would send to Gemini, defer, skip, or recover —
+    without spending quota or changing anything. Gmail and the database are
+    only read; nothing is claimed, no Gemini call is made, no Calendar event
+    is touched, and no PipelineRun row is written (so metrics and the daily
+    usage count are unaffected). The one incidental write is the OAuth token
+    cache, if the token happens to need refreshing — same as any read.
     """
     session = get_session()
-    run = repository.start_run(session)
-    fetched = processed = failed = filtered_out = already_terminal = deferred = 0
+    run = None if dry_run else repository.start_run(session)
+    fetched = processed = failed = filtered_out = already_terminal = deferred = would_process = 0
+    would_process_ids: list[str] = []
+    stuck_ids: list[str] = []
+
+    def finish(status: RunStatus, error_message: str | None = None) -> None:
+        if run is None:  # dry run: nothing is ever recorded
+            return
+        repository.finish_run(
+            session,
+            run.id,
+            status=status,
+            emails_fetched=fetched,
+            emails_processed=processed,
+            emails_failed=failed,
+            emails_filtered_out=filtered_out,
+            emails_already_terminal=already_terminal,
+            error_message=error_message,
+        )
 
     try:
         calls_left_at_start = _daily_calls_left(session)
@@ -61,7 +86,24 @@ def run_pipeline() -> dict:
         def over_budget() -> bool:
             # Every claimed email is exactly one Gemini call, tallied as
             # processed or failed — so this run's spend so far is their sum.
-            return calls_left_at_start is not None and calls_left_at_start - (processed + failed) <= 0
+            # In a dry run nothing is spent, so the calls it WOULD make stand in.
+            spent = processed + failed + would_process
+            return calls_left_at_start is not None and calls_left_at_start - spent <= 0
+
+        def handle(email) -> None:
+            nonlocal processed, failed, filtered_out, deferred, would_process
+            outcome = _claim_and_process(session, email, over_budget=over_budget(), dry_run=dry_run)
+            if outcome == "processed":
+                processed += 1
+            elif outcome == "failed":
+                failed += 1
+            elif outcome == "filtered_out":
+                filtered_out += 1
+            elif outcome == "deferred":
+                deferred += 1
+            elif outcome == "would_process":
+                would_process += 1
+                would_process_ids.append(email.id)
 
         service = get_gmail_service()
         messages = fetch_recent_messages(
@@ -81,15 +123,7 @@ def run_pipeline() -> dict:
                 already_terminal += 1
                 continue  # already completed/skipped in a prior run
 
-            outcome = _claim_and_process(session, email, over_budget=over_budget())
-            if outcome == "processed":
-                processed += 1
-            elif outcome == "failed":
-                failed += 1
-            elif outcome == "filtered_out":
-                filtered_out += 1
-            elif outcome == "deferred":
-                deferred += 1
+            handle(email)
 
         # Recovery sweep: a stuck PROCESSING (worker crashed) or FAILED
         # (eligible for retry) row normally gets picked back up once its
@@ -112,15 +146,7 @@ def run_pipeline() -> dict:
         elif stuck_ids:
             logger.info("Recovering %d stuck email(s) outside the normal fetch: %s", len(stuck_ids), stuck_ids)
             for email in fetch_messages_by_ids(service, stuck_ids):
-                outcome = _claim_and_process(session, email, over_budget=over_budget())
-                if outcome == "processed":
-                    processed += 1
-                elif outcome == "failed":
-                    failed += 1
-                elif outcome == "filtered_out":
-                    filtered_out += 1
-                elif outcome == "deferred":
-                    deferred += 1
+                handle(email)
 
         if deferred:
             logger.warning(
@@ -128,29 +154,10 @@ def run_pipeline() -> dict:
                 GEMINI_DAILY_QUOTA, GEMINI_DAILY_RESERVE, deferred,
             )
 
-        repository.finish_run(
-            session,
-            run.id,
-            status=RunStatus.SUCCESS,
-            emails_fetched=fetched,
-            emails_processed=processed,
-            emails_failed=failed,
-            emails_filtered_out=filtered_out,
-            emails_already_terminal=already_terminal,
-        )
+        finish(RunStatus.SUCCESS)
     except Exception as e:
         logger.exception("Pipeline run failed")
-        repository.finish_run(
-            session,
-            run.id,
-            status=RunStatus.FAILURE,
-            emails_fetched=fetched,
-            emails_processed=processed,
-            emails_failed=failed,
-            emails_filtered_out=filtered_out,
-            emails_already_terminal=already_terminal,
-            error_message=f"{type(e).__name__}: {e}",
-        )
+        finish(RunStatus.FAILURE, error_message=f"{type(e).__name__}: {e}")
         raise
     finally:
         session.close()
@@ -162,6 +169,10 @@ def run_pipeline() -> dict:
         "filtered_out": filtered_out,
         "already_terminal": already_terminal,
         "deferred": deferred,
+        "dry_run": dry_run,
+        "would_process": would_process,
+        "would_process_ids": would_process_ids,
+        "recovery_candidate_ids": stuck_ids,
     }
 
 
@@ -177,7 +188,7 @@ def _daily_calls_left(session) -> int | None:
     return budget - metrics.daily_llm_usage(session)["calls"]
 
 
-def _claim_and_process(session, email, *, over_budget: bool = False) -> str:
+def _claim_and_process(session, email, *, over_budget: bool = False, dry_run: bool = False) -> str:
     """Shared by the normal fetch loop and the stale-recovery sweep: filter,
     claim, process, and isolate a failure to just this email.
 
@@ -189,6 +200,11 @@ def _claim_and_process(session, email, *, over_budget: bool = False) -> str:
     cost a Gemini call but the daily budget is spent — never claimed, so a
     later run picks it up untouched; checked after the filter so an email
     that costs nothing is still counted as filtered/skipped, not deferred).
+
+    With dry_run, everything above is decided exactly the same way, but the
+    email is never claimed or sent to Gemini: one that would have been comes
+    back as "would_process" (or "skipped" if the claim would have been refused
+    — see repository.would_claim_email), and nothing is written.
     """
     if email.has_calendar_invite:
         # A real .ics calendar invite — Gmail/Calendar already surfaces
@@ -208,6 +224,9 @@ def _claim_and_process(session, email, *, over_budget: bool = False) -> str:
 
     if over_budget:
         return "deferred"
+
+    if dry_run:
+        return "would_process" if repository.would_claim_email(session, email.id) else "skipped"
 
     if not repository.try_claim_email(session, email.id, email.thread_id, email.subject):
         return "skipped"  # claimed elsewhere, or a live attempt already in flight
