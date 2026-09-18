@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the AWS Lambda deployment zip: build/todue-relay-lambda.zip
+# Build the AWS Lambda deployment zip: infra/aws/build/todue-relay-lambda.zip
 #
 # Dependencies are installed inside AWS's own Lambda Python image, so the
 # compiled wheels (psycopg, cryptography, pydantic_core) match what Lambda
@@ -7,18 +7,19 @@
 # Needs Docker. Builds nothing in AWS and uploads nothing.
 #
 # Usage (from anywhere):
-#     backend/scripts/build_lambda.sh
-#     ARCH=amd64 backend/scripts/build_lambda.sh     # for an x86_64 function
+#     infra/aws/build_lambda.sh
+#     ARCH=amd64 infra/aws/build_lambda.sh     # for an x86_64 function
 #
 # ARCH must match the function's "architecture" setting (arm64 or x86_64).
 # Default arm64: native on Apple-silicon Macs, so no slow emulation.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."   # backend/
+HERE="$(cd "$(dirname "$0")" && pwd)"            # infra/aws/
+BACKEND="$(cd "$HERE/../../backend" && pwd)"     # the code being packaged
 
 PY_VERSION="${PY_VERSION:-3.14}"
 ARCH="${ARCH:-arm64}"
-OUT="build"
+OUT="$HERE/build"
 
 rm -rf "$OUT"
 mkdir -p "$OUT/pkg"
@@ -27,8 +28,8 @@ docker run --rm \
   --platform "linux/$ARCH" \
   --user "$(id -u):$(id -g)" \
   --entrypoint pip \
-  -v "$PWD":/src:ro \
-  -v "$PWD/$OUT/pkg":/pkg \
+  -v "$BACKEND":/src:ro \
+  -v "$OUT/pkg":/pkg \
   "public.ecr.aws/lambda/python:$PY_VERSION" \
   install --quiet --no-cache-dir --target /pkg -r /src/requirements-lambda.txt
 
@@ -40,7 +41,7 @@ DOCS="$OUT/pkg/googleapiclient/discovery_cache/documents"
 find "$DOCS" -type f ! -name gmail.v1.json ! -name calendar.v3.json -delete
 test -f "$DOCS/gmail.v1.json" && test -f "$DOCS/calendar.v3.json"
 
-cp -R app lambda_handler.py "$OUT/pkg/"
+cp -R "$BACKEND/app" "$BACKEND/lambda_handler.py" "$OUT/pkg/"
 find "$OUT/pkg" -name __pycache__ -prune -exec rm -rf {} +
 
 (cd "$OUT/pkg" && zip -qr ../todue-relay-lambda.zip .)
