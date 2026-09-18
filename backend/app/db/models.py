@@ -5,10 +5,12 @@ claims it for processing. This is the source of both idempotency (a
 completed/skipped email is never re-sent to the LLM) and the audit trail
 (the full extraction result is stored, not just a seen/unseen bit).
 
-`is_stale` and `superseded_by_email_id` are provisioned but unused: they
-exist so that whichever "deadline changed" policy gets picked (see
-claude/tradeoffs/) can be implemented without an schema migration — a plain
-update-in-place policy just never sets them.
+`is_stale` and `superseded_by_email_id` are set on the OLD row by
+repository.mark_superseded when a newer email is recognized as a changed
+version of the same deadline (its Calendar event is updated in place and the
+new row records duplicate_of_email_id / date_changed_from — see
+claude/tradeoffs/deadline-changed-policy.md and
+claude/tradeoffs/duplicate-deadline-detection.md).
 """
 
 from __future__ import annotations

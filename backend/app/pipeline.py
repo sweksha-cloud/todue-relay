@@ -12,8 +12,9 @@ Confidence routing (claude/tradeoffs/confidence-routing.md): high
 confidence + a plausible date auto-creates the Calendar event; everything
 else (low confidence, or a deadline that fails the plausibility check)
 lands as "needs review" for the dashboard's approve/decline checkmarks.
-Plausibility bounds are throwaway defaults (see app/config.py) — the real
-policy decision is still open.
+Plausibility bounds (PLAUSIBLE_MAX_PAST_DAYS / PLAUSIBLE_MAX_FUTURE_DAYS in
+app/config.py) were decided 2026-09-14 — see
+claude/tradeoffs/stale-implausible-date-handling.md.
 """
 
 from __future__ import annotations

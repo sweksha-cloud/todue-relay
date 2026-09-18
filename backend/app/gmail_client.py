@@ -127,9 +127,9 @@ def fetch_recent_messages(service, max_results: int = 50, query: str | None = No
 
 def fetch_messages_by_ids(service, message_ids: list[str]) -> list[EmailMessage]:
     """Fetch specific messages directly by id, bypassing any search query
-    (unread status, date window, etc). Used to recover a stuck PROCESSING
-    row whose email no longer matches the normal fetch query — see
-    repository.get_stale_processing_email_ids.
+    (unread status, date window, etc). Used to recover a stuck PROCESSING or
+    FAILED row whose email no longer matches the normal fetch query — see
+    repository.get_recoverable_stuck_email_ids.
     """
     messages: list[EmailMessage] = []
     for message_id in message_ids:
