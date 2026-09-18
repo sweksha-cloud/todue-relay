@@ -113,17 +113,13 @@ FILTER_PASS_RATE_ANOMALY_THRESHOLD = float(
 FILTER_ANOMALY_MIN_SAMPLE_SIZE = int(os.getenv("FILTER_ANOMALY_MIN_SAMPLE_SIZE", "5"))
 
 # Gemini free-tier requests-per-DAY cap (per project, per model), resetting
-# at midnight Pacific. Google's docs list no monthly cap, only per-minute
-# and per-day. Only the per-minute limit (5/min, see
-# GEMINI_MIN_INTERVAL_SECONDS above) is confirmed for this account, from
-# real stored 429s (quotaId ...PerMinutePerProjectPerModel-FreeTier,
-# quotaValue 5). The daily figure is UNCONFIRMED: Google no longer publishes
-# it, and third-party reports (a direct read of quotaValue from a 429 on
-# gemini-3.6-flash, 2026-09-02) put it at 20. Defaulting to 20 on purpose —
-# a too-low guess shows a false warning, a too-high one stays silent while
-# real calls fail. Replace with your real number: see the "Rate limit" page
-# in Google AI Studio (aistudio.google.com/rate-limit), or read `quotaValue`
-# out of the next per-day 429. See claude/tradeoffs/gemini-quota-tracking.md.
+# at midnight Pacific. CONFIRMED 2026-09-18 from Google AI Studio's Rate
+# limit page for this account: gemini-3.6-flash RPD 20, RPM 5, TPM 250K
+# (matches the stored per-minute 429s, quotaValue 5). Google's docs list no
+# monthly cap. Limits are per project AND per model: anything else using the
+# same project/model (AI Studio playground, another script) spends this same
+# allowance and is invisible to this pipeline's own count.
+# See claude/tradeoffs/gemini-quota-tracking.md.
 GEMINI_DAILY_QUOTA = int(os.getenv("GEMINI_DAILY_QUOTA", "20"))
 
 # Surfaced on the main dashboard (2026-09-18), not just /metrics: flag

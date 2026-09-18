@@ -22,10 +22,11 @@
     <div style="background:{{ '#e5484d' if llm_usage.warning else '#1a6fd1' }}; height:100%; width:{{ ([llm_usage.pct, 100]|min)|round(1) if llm_usage.pct is not none else 0 }}%;"></div>
   </div>
   <p class="verdict" style="margin-top:10px; margin-bottom:0;">
-    Counted from each run's own records, so it's exact for calls this pipeline made. The daily quota
-    (GEMINI_DAILY_QUOTA in app/config.py) is <strong>unconfirmed</strong> for your account: only the
-    per-minute limit (5) has been seen in a real 429. Check the Rate limit page in Google AI Studio
-    and set the real number. There is no monthly quota — Gemini limits are per-minute and per-day.
+    Counted from each run's own records, so it's exact for calls this pipeline made — but it can't see
+    anything else using the same Google project (the AI Studio playground, another script). The daily
+    limit of {{ llm_usage.quota }} is the free-tier figure for this model, confirmed in Google AI Studio;
+    if Google's own Rate limit page shows more used than this, something else is spending it.
+    There is no monthly quota — Gemini limits are per-minute and per-day.
   </p>
 </div>
 
