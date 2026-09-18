@@ -3,23 +3,29 @@
 {% block content %}
 
 <div class="card">
-  <h2 style="font-size:1.05rem; margin-top:0;">LLM usage this month</h2>
+  <h2 style="font-size:1.05rem; margin-top:0;">LLM usage today</h2>
   <div class="summary-row">
     <div class="stat">
       <div class="num">{{ llm_usage.calls }} / {{ llm_usage.quota }}</div>
-      <div class="label">calls since {{ llm_usage.month_start.strftime("%b %d") }}</div>
+      <div class="label">calls today (resets {{ (llm_usage.resets_at | to_local).strftime("%I:%M %p") }} your time)</div>
     </div>
     <div class="stat">
-      <div class="num">{{ "%.1f%%"|format(llm_usage.pct) if llm_usage.pct is not none else "—" }}</div>
-      <div class="label">of monthly quota</div>
+      <div class="num">{{ "%.0f%%"|format(llm_usage.pct) if llm_usage.pct is not none else "—" }}</div>
+      <div class="label">of daily quota</div>
+    </div>
+    <div class="stat">
+      <div class="num">{{ llm_usage.calls_this_month }}</div>
+      <div class="label">calls since {{ llm_usage.month_start.strftime("%b %d") }}</div>
     </div>
   </div>
   <div style="background:var(--border); border-radius:999px; height:8px; margin-top:12px; overflow:hidden;">
-    <div style="background:#1a6fd1; height:100%; width:{{ llm_usage.pct|round(1) if llm_usage.pct is not none else 0 }}%;"></div>
+    <div style="background:{{ '#e5484d' if llm_usage.warning else '#1a6fd1' }}; height:100%; width:{{ ([llm_usage.pct, 100]|min)|round(1) if llm_usage.pct is not none else 0 }}%;"></div>
   </div>
   <p class="verdict" style="margin-top:10px; margin-bottom:0;">
-    Quota is a placeholder (GEMINI_MONTHLY_QUOTA in app/config.py) — only the per-minute rate limit
-    has ever been confirmed against a real 429. Treat this percentage as directional, not exact.
+    Counted from each run's own records, so it's exact for calls this pipeline made. The daily quota
+    (GEMINI_DAILY_QUOTA in app/config.py) is <strong>unconfirmed</strong> for your account: only the
+    per-minute limit (5) has been seen in a real 429. Check the Rate limit page in Google AI Studio
+    and set the real number. There is no monthly quota — Gemini limits are per-minute and per-day.
   </p>
 </div>
 

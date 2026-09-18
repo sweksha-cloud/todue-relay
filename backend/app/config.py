@@ -112,17 +112,22 @@ FILTER_PASS_RATE_ANOMALY_THRESHOLD = float(
 # not a signal.
 FILTER_ANOMALY_MIN_SAMPLE_SIZE = int(os.getenv("FILTER_ANOMALY_MIN_SAMPLE_SIZE", "5"))
 
-# Gemini free-tier MONTHLY/DAILY request cap — genuinely unknown at the
-# time this was added; only the per-minute limit (5 req/min, see
-# GEMINI_MIN_INTERVAL_SECONDS above) has ever been confirmed against a
-# real 429. This is a placeholder so the usage-vs-quota display has
-# *something* to divide by — treat the resulting percentage as
-# directional only until this is replaced with a real number from your
-# Gemini plan/console.
-GEMINI_MONTHLY_QUOTA = int(os.getenv("GEMINI_MONTHLY_QUOTA", "1500"))
+# Gemini free-tier requests-per-DAY cap (per project, per model), resetting
+# at midnight Pacific. Google's docs list no monthly cap, only per-minute
+# and per-day. Only the per-minute limit (5/min, see
+# GEMINI_MIN_INTERVAL_SECONDS above) is confirmed for this account, from
+# real stored 429s (quotaId ...PerMinutePerProjectPerModel-FreeTier,
+# quotaValue 5). The daily figure is UNCONFIRMED: Google no longer publishes
+# it, and third-party reports (a direct read of quotaValue from a 429 on
+# gemini-3.6-flash, 2026-09-02) put it at 20. Defaulting to 20 on purpose —
+# a too-low guess shows a false warning, a too-high one stays silent while
+# real calls fail. Replace with your real number: see the "Rate limit" page
+# in Google AI Studio (aistudio.google.com/rate-limit), or read `quotaValue`
+# out of the next per-day 429. See claude/tradeoffs/gemini-quota-tracking.md.
+GEMINI_DAILY_QUOTA = int(os.getenv("GEMINI_DAILY_QUOTA", "20"))
 
 # Surfaced on the main dashboard (2026-09-18), not just /metrics: flag
-# usage as a warning once it crosses this % of GEMINI_MONTHLY_QUOTA, so a
-# creeping approach to the (placeholder) limit is noticed before the
-# pipeline starts failing silently on 429s.
+# usage as a warning once it crosses this % of GEMINI_DAILY_QUOTA, so a
+# creeping approach to the limit is noticed before the pipeline starts
+# failing on 429s.
 LLM_USAGE_WARNING_THRESHOLD_PCT = float(os.getenv("LLM_USAGE_WARNING_THRESHOLD_PCT", "80"))

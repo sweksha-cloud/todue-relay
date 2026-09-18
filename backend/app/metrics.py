@@ -4,30 +4,26 @@ pipeline already writes to Postgres for its own operational reasons
 deliberately not a new logging/tracking system. Nothing here writes
 anything; it only reads and aggregates.
 
-Two known precision gaps, accepted rather than solved with new schema
-(a dedicated last_llm_call_at / corrected_at column would fix the first
-two, but was judged not worth a schema change at this project's scale):
-- Both LLM call volume and the weekly correction rate are bucketed by a
-  row's single `updated_at`, which Postgres bumps on ANY change to the
-  row — not just the event being measured. Approving, voting on,
+Known precision gaps, accepted rather than solved with new schema:
+- The weekly correction rate is bucketed by a row's `updated_at`, which
+  Postgres bumps on ANY change to the row — not just the vote. Approving,
   rescheduling, removing, superseding (mark_superseded), or folding a
-  follow-up into (fold_action_item) a row all move it. So:
-  - LLM usage: touching an old row pulls its whole attempt_count into
-    the current month (e.g. voting in September on an August email
-    counts that August call as a September one).
-  - Correction rate: a vote can slide into a later week if the same row
-    is touched again afterwards.
-  Both are approximate, not exact. The error is small while the only
-  user is one person mostly reviewing recent mail, and grows if old
-  items get reviewed in bulk. Treat these numbers as trends, not counts.
-- GEMINI_MONTHLY_QUOTA (app/config.py) is a placeholder; only the
-  per-minute rate limit has ever been confirmed against a real 429.
+  follow-up into (fold_action_item) a row all move it, so a vote can slide
+  into a later week. Approximate, fine as a trend; a dedicated
+  `corrected_at` column would fix it but was judged not worth a schema
+  change at this project's scale.
+- GEMINI_DAILY_QUOTA (app/config.py) is unconfirmed for this account: only
+  the per-minute limit (5) has ever been seen in a real 429. See
+  claude/tradeoffs/gemini-quota-tracking.md.
+
+LLM usage is NOT subject to the updated_at problem: it's summed from
+pipeline_runs (see daily_llm_usage), whose started_at is written once.
 """
 
 from __future__ import annotations
 
-import calendar
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
@@ -35,10 +31,14 @@ from sqlalchemy.orm import Session
 from app.config import (
     FILTER_ANOMALY_MIN_SAMPLE_SIZE,
     FILTER_PASS_RATE_ANOMALY_THRESHOLD,
-    GEMINI_MONTHLY_QUOTA,
+    GEMINI_DAILY_QUOTA,
     LLM_USAGE_WARNING_THRESHOLD_PCT,
 )
 from app.db.models import ActionType, PipelineRun, ProcessedEmail, ProcessingStatus
+
+# Gemini's requests-per-day quota resets at midnight Pacific (per Google's rate-limit
+# docs), regardless of where this runs — so "today" for quota purposes is a Pacific day.
+QUOTA_RESET_TZ = ZoneInfo("America/Los_Angeles")
 
 
 def _filter_pass_rate(run: PipelineRun) -> float | None:
@@ -192,47 +192,42 @@ def weekly_correction_rate(session: Session, weeks: int = 12) -> list[dict]:
     ]
 
 
-def monthly_llm_usage(session: Session) -> dict:
-    """Approximate LLM call volume for the current calendar month — see
-    the precision caveat in this module's docstring. `attempt_count` is
-    summed across every row whose `updated_at` falls this month, which is
-    right for the common case (an email attempted once, the day it
-    arrives, then left alone) but overcounts whenever an older row is
-    touched again this month (a vote, an approval, a supersede, a fold) —
-    its earlier attempts get attributed to this month.
-
-    Also projects an end-of-month total by linearly extrapolating the
-    current daily rate (calls so far / days elapsed * days in month) —
-    pure arithmetic on data already computed here, no new tracking.
-    Deliberately naive: early in the month, a handful of calls on day 1
-    can extrapolate to a wildly high projection. Accepted rather than
-    smoothed — a simple, honestly-labeled estimate, not a forecasting
-    model.
+def _llm_calls_since(session: Session, since: datetime) -> int:
+    """LLM calls made by runs that started at/after `since`. Every email a
+    run claims makes exactly one extract_deadline call, and a run records
+    those as emails_processed + emails_failed (the same "sent to LLM" figure
+    run_history shows). Counts a call the API rejected with a 429 too — it
+    may not consume quota, so this is a slight upper bound, the safe
+    direction for a warning. Not visible until the run finishes (counters
+    are written at the end), and a run killed mid-flight leaves zeros.
     """
-    now = datetime.now(timezone.utc)
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-
-    stmt = select(func.coalesce(func.sum(ProcessedEmail.attempt_count), 0)).where(
-        ProcessedEmail.updated_at >= month_start
+    stmt = select(func.coalesce(func.sum(PipelineRun.emails_processed + PipelineRun.emails_failed), 0)).where(
+        PipelineRun.started_at >= since
     )
-    calls_this_month = session.execute(stmt).scalar_one()
+    return int(session.execute(stmt).scalar_one())
 
-    days_in_month = calendar.monthrange(now.year, now.month)[1]
-    days_elapsed = (now.date() - month_start.date()).days + 1  # count today itself
-    projected_calls = round(calls_this_month / days_elapsed * days_in_month)
 
-    pct = (calls_this_month / GEMINI_MONTHLY_QUOTA * 100) if GEMINI_MONTHLY_QUOTA else None
-    projected_pct = (projected_calls / GEMINI_MONTHLY_QUOTA * 100) if GEMINI_MONTHLY_QUOTA else None
+def daily_llm_usage(session: Session) -> dict:
+    """LLM calls made today (a Pacific day, matching when Gemini's daily
+    quota resets) against GEMINI_DAILY_QUOTA — the limit that actually
+    bites. There is no monthly cap in Google's docs; the old monthly-quota
+    bar could sit near 0% on the same day the daily limit was exhausted.
+    Also reports this month's total, informational only (no quota).
+    """
+    now = datetime.now(QUOTA_RESET_TZ)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    month_start = day_start.replace(day=1)
+
+    calls_today = _llm_calls_since(session, day_start)
+    calls_this_month = _llm_calls_since(session, month_start)
+    pct = (calls_today / GEMINI_DAILY_QUOTA * 100) if GEMINI_DAILY_QUOTA else None
 
     return {
-        "calls": calls_this_month,
-        "quota": GEMINI_MONTHLY_QUOTA,
+        "calls": calls_today,
+        "quota": GEMINI_DAILY_QUOTA,
         "pct": pct,
         "warning": pct is not None and pct >= LLM_USAGE_WARNING_THRESHOLD_PCT,
-        "projected_calls": projected_calls,
-        "projected_pct": projected_pct,
-        "projected_warning": projected_pct is not None and projected_pct >= LLM_USAGE_WARNING_THRESHOLD_PCT,
+        "resets_at": day_start + timedelta(days=1),
+        "calls_this_month": calls_this_month,
         "month_start": month_start.date(),
-        "days_elapsed": days_elapsed,
-        "days_in_month": days_in_month,
     }

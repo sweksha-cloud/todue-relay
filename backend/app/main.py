@@ -74,7 +74,7 @@ def dashboard(
     caught_this_week = repository.count_deadlines_caught_since(db, since)
 
     action_items_by_day = _group_by_day(action_items)
-    llm_usage = metrics.monthly_llm_usage(db)
+    llm_usage = metrics.daily_llm_usage(db)
 
     return templates.TemplateResponse(
         request,
@@ -105,7 +105,7 @@ def metrics_page(request: Request, db: Session = Depends(get_db)):
         {
             "run_history": metrics.run_history(db),
             "weekly_correction_rate": metrics.weekly_correction_rate(db),
-            "llm_usage": metrics.monthly_llm_usage(db),
+            "llm_usage": metrics.daily_llm_usage(db),
         },
     )
 
