@@ -91,7 +91,9 @@ keeps older code working in the meantime.
 cd backend
 cp .env.example .env
 # fill in GEMINI_API_KEY, DATABASE_URL, CALENDAR_TIMEZONE (your IANA zone,
-# e.g. America/Los_Angeles — required, see .env.example for why)
+# e.g. America/Los_Angeles — required, see .env.example for why).
+# .env.example lists every setting with its default, and a test keeps it in
+# sync with app/config.py — don't leave stale values in your own .env either.
 ```
 
 ### 5. Install and run
@@ -192,6 +194,11 @@ GitHub UI under Settings → Secrets and variables → Actions):
 directly in the workflow file (not secrets, since they're not
 sensitive). See `claude/tradeoffs/cron-interval.md` and
 `claude/tradeoffs/fetch-window.md` for why those specific values.
+
+The job runs one at a time (a `concurrency` group queues an overlapping
+manual/scheduled run rather than running two side by side) and is capped at
+25 minutes. Note this only serializes runs *on GitHub* — a run you start from
+your own machine isn't covered.
 
 **Cadence:** the schedule says hourly, but GitHub treats scheduled workflows as
 best-effort — real runs were observed every 2.5-5.7 hours (about 3.7 on
