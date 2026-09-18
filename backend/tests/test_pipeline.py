@@ -1,9 +1,12 @@
+import pytest
+
 from app import pipeline
 from app.db import repository
-from app.db.models import ProcessedEmail, ProcessingStatus
+from app.db.models import ProcessedEmail, ProcessingStatus, RunStatus
 from app.gmail_client import EmailMessage
 from app.llm_client import LLMRateLimitError
 from app.pipeline import _claim_and_process
+from app.schemas import ExtractionResult
 
 
 def _email(**overrides) -> EmailMessage:
@@ -102,3 +105,147 @@ class TestRateLimitDoesNotCountTowardRetryCap:
         pipeline._claim_and_process(db_session, _email())
 
         assert db_session.get(ProcessedEmail, "e1").attempt_count == 1
+
+
+# --- Daily call budget guard -------------------------------------------------
+# Drives the real run_pipeline() loop against real Postgres; only Gmail and
+# Gemini are stubbed. Names are far apart on purpose so action-item duplicate
+# detection (name similarity >= 0.7) never folds one test email into another.
+_EVENT_NAMES = {"e1": "alpha review", "e2": "zebra invoice", "e3": "quartz meeting", "e4": "hydra summit"}
+
+
+class _Harness:
+    def __init__(self):
+        self.emails = []
+        self.extract_calls = []
+        self.recovery_fetches = []
+        self.fail_ids = set()
+
+
+@pytest.fixture
+def harness(db_session, monkeypatch):
+    h = _Harness()
+    monkeypatch.setattr(pipeline, "get_session", lambda: db_session)
+    monkeypatch.setattr(pipeline, "get_gmail_service", lambda: object())
+    monkeypatch.setattr(pipeline, "fetch_recent_messages", lambda service, **kw: list(h.emails))
+    monkeypatch.setattr(
+        pipeline, "fetch_messages_by_ids", lambda service, ids: h.recovery_fetches.append(list(ids)) or []
+    )
+
+    def fake_extract(email):
+        h.extract_calls.append(email.id)
+        if email.id in h.fail_ids:
+            raise ValueError("bad response")
+        return ExtractionResult(
+            email_id=email.id, event_name=_EVENT_NAMES[email.id], deadline_date_raw=None, deadline_date=None,
+            source_context="ctx", confidence="low", action_type="needs_reply",
+        )
+
+    monkeypatch.setattr(pipeline, "extract_deadline", fake_extract)
+    # budget = quota - reserve = 10 - 2 = 8 calls/day
+    monkeypatch.setattr(pipeline, "GEMINI_DAILY_QUOTA", 10)
+    monkeypatch.setattr(pipeline, "GEMINI_DAILY_RESERVE", 2)
+    return h
+
+
+def _spend(db_session, calls):
+    """A finished run earlier today that already made `calls` Gemini calls."""
+    run = repository.start_run(db_session)
+    repository.finish_run(
+        db_session, run.id, status=RunStatus.SUCCESS,
+        emails_fetched=calls, emails_processed=calls, emails_failed=0,
+    )
+
+
+class TestDailyBudgetGuard:
+    def test_stops_claiming_once_the_budget_is_spent(self, harness, db_session):
+        _spend(db_session, 6)  # 8 budget - 6 already spent = 2 left
+        harness.emails = [_email(id=i) for i in ("e1", "e2", "e3", "e4")]
+
+        result = pipeline.run_pipeline()
+
+        assert result["processed"] == 2
+        assert result["deferred"] == 2
+        assert harness.extract_calls == ["e1", "e2"]
+        # Deferred emails were never claimed — no trace, so a later run sees them fresh.
+        claimed = {r.email_id for r in db_session.query(ProcessedEmail).all()}
+        assert claimed == {"e1", "e2"}
+
+    def test_deferred_emails_are_processed_once_budget_frees(self, harness, db_session, monkeypatch):
+        _spend(db_session, 6)
+        harness.emails = [_email(id=i) for i in ("e1", "e2", "e3", "e4")]
+        pipeline.run_pipeline()
+
+        monkeypatch.setattr(pipeline, "GEMINI_DAILY_QUOTA", 50)  # e.g. the next day / a raised quota
+        result = pipeline.run_pipeline()
+
+        assert result["already_terminal"] == 2
+        assert result["processed"] == 2
+        assert result["deferred"] == 0
+        assert sorted(harness.extract_calls) == ["e1", "e2", "e3", "e4"]  # nothing lost, nothing repeated
+
+    def test_exactly_enough_budget_processes_everything(self, harness, db_session):
+        _spend(db_session, 6)  # 2 left
+        harness.emails = [_email(id="e1"), _email(id="e2")]
+
+        result = pipeline.run_pipeline()
+
+        assert result["processed"] == 2
+        assert result["deferred"] == 0
+
+    def test_a_failed_call_still_spends_budget(self, harness, db_session):
+        _spend(db_session, 6)  # 2 left
+        harness.fail_ids = {"e1"}
+        harness.emails = [_email(id=i) for i in ("e1", "e2", "e3")]
+
+        result = pipeline.run_pipeline()
+
+        assert (result["failed"], result["processed"], result["deferred"]) == (1, 1, 1)
+
+    def test_emails_that_cost_nothing_are_not_deferred(self, harness, db_session):
+        """Budget fully spent: a pre-filter reject and a calendar invite make
+        no Gemini call, so they keep their own outcome — only an email that
+        would have cost a call is deferred.
+        """
+        _spend(db_session, 8)  # 0 left
+        harness.emails = [
+            _email(id="e1", subject="hi", body_text="just saying hello, nothing time-sensitive here"),
+            _email(id="e2", has_calendar_invite=True),
+            _email(id="e3"),
+        ]
+
+        result = pipeline.run_pipeline()
+
+        assert result["filtered_out"] == 1
+        assert result["deferred"] == 1
+        assert result["processed"] == 0
+
+    def test_recovery_sweep_is_skipped_when_budget_is_spent(self, harness, db_session):
+        repository.try_claim_email(db_session, "stuck", "t", "s")
+        repository.mark_failed(db_session, "stuck", "503")
+        _spend(db_session, 8)  # 0 left
+
+        pipeline.run_pipeline()
+
+        assert harness.recovery_fetches == []  # not even fetched from Gmail
+
+    def test_recovery_sweep_still_runs_with_budget_left(self, harness, db_session):
+        """Counterpart — proves the skip above is caused by the budget, not
+        by the sweep never running in this harness.
+        """
+        repository.try_claim_email(db_session, "stuck", "t", "s")
+        repository.mark_failed(db_session, "stuck", "503")
+
+        pipeline.run_pipeline()
+
+        assert harness.recovery_fetches == [["stuck"]]
+
+    def test_quota_zero_turns_the_guard_off(self, harness, db_session, monkeypatch):
+        monkeypatch.setattr(pipeline, "GEMINI_DAILY_QUOTA", 0)
+        _spend(db_session, 500)
+        harness.emails = [_email(id=i) for i in ("e1", "e2", "e3", "e4")]
+
+        result = pipeline.run_pipeline()
+
+        assert result["processed"] == 4
+        assert result["deferred"] == 0

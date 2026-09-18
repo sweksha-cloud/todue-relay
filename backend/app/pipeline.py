@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import logging
 
-from app import calendar_client
+from app import calendar_client, metrics
 from app.config import (
     FETCH_WINDOW_DAYS,
+    GEMINI_DAILY_QUOTA,
+    GEMINI_DAILY_RESERVE,
     MAX_EMAILS_PER_RUN,
     PLAUSIBLE_MAX_FUTURE_DAYS,
     PLAUSIBLE_MAX_PAST_DAYS,
@@ -41,12 +43,26 @@ logger = logging.getLogger(__name__)
 def run_pipeline() -> dict:
     """Process up to MAX_EMAILS_PER_RUN recent emails end-to-end. Returns a
     summary dict; always records a PipelineRun row, success or failure.
+
+    Daily call budget (claude/tradeoffs/gemini-quota-tracking.md): once
+    today's Gemini calls reach GEMINI_DAILY_QUOTA - GEMINI_DAILY_RESERVE, no
+    further email is claimed this run — it's "deferred", left untouched so a
+    later run (after the midnight-Pacific reset) picks it up while it's still
+    unread and inside FETCH_WINDOW_DAYS. Applies to every caller, manual runs
+    included. Deferral is logged and returned but not persisted anywhere.
     """
     session = get_session()
     run = repository.start_run(session)
-    fetched = processed = failed = filtered_out = already_terminal = 0
+    fetched = processed = failed = filtered_out = already_terminal = deferred = 0
 
     try:
+        calls_left_at_start = _daily_calls_left(session)
+
+        def over_budget() -> bool:
+            # Every claimed email is exactly one Gemini call, tallied as
+            # processed or failed — so this run's spend so far is their sum.
+            return calls_left_at_start is not None and calls_left_at_start - (processed + failed) <= 0
+
         service = get_gmail_service()
         messages = fetch_recent_messages(
             service,
@@ -65,13 +81,15 @@ def run_pipeline() -> dict:
                 already_terminal += 1
                 continue  # already completed/skipped in a prior run
 
-            outcome = _claim_and_process(session, email)
+            outcome = _claim_and_process(session, email, over_budget=over_budget())
             if outcome == "processed":
                 processed += 1
             elif outcome == "failed":
                 failed += 1
             elif outcome == "filtered_out":
                 filtered_out += 1
+            elif outcome == "deferred":
+                deferred += 1
 
         # Recovery sweep: a stuck PROCESSING (worker crashed) or FAILED
         # (eligible for retry) row normally gets picked back up once its
@@ -87,16 +105,28 @@ def run_pipeline() -> dict:
         stuck_ids = [
             i for i in repository.get_recoverable_stuck_email_ids(session) if i not in already_seen_ids
         ]
-        if stuck_ids:
+        if stuck_ids and over_budget():
+            logger.warning(
+                "Daily Gemini budget spent — skipping recovery of %d stuck email(s) until a later run", len(stuck_ids)
+            )
+        elif stuck_ids:
             logger.info("Recovering %d stuck email(s) outside the normal fetch: %s", len(stuck_ids), stuck_ids)
             for email in fetch_messages_by_ids(service, stuck_ids):
-                outcome = _claim_and_process(session, email)
+                outcome = _claim_and_process(session, email, over_budget=over_budget())
                 if outcome == "processed":
                     processed += 1
                 elif outcome == "failed":
                     failed += 1
                 elif outcome == "filtered_out":
                     filtered_out += 1
+                elif outcome == "deferred":
+                    deferred += 1
+
+        if deferred:
+            logger.warning(
+                "Daily Gemini budget spent (quota %s, reserve %s) — deferred %d email(s) to a later run",
+                GEMINI_DAILY_QUOTA, GEMINI_DAILY_RESERVE, deferred,
+            )
 
         repository.finish_run(
             session,
@@ -131,18 +161,34 @@ def run_pipeline() -> dict:
         "failed": failed,
         "filtered_out": filtered_out,
         "already_terminal": already_terminal,
+        "deferred": deferred,
     }
 
 
-def _claim_and_process(session, email) -> str:
+def _daily_calls_left(session) -> int | None:
+    """Calls today's budget still allows as this run starts: (quota minus
+    reserve) minus calls recorded by today's finished runs (Pacific day, see
+    metrics.daily_llm_usage). None when GEMINI_DAILY_QUOTA is 0 — guard off.
+    Can be negative or zero; the caller treats <= 0 as "budget spent".
+    """
+    if not GEMINI_DAILY_QUOTA:
+        return None
+    budget = max(0, GEMINI_DAILY_QUOTA - GEMINI_DAILY_RESERVE)
+    return budget - metrics.daily_llm_usage(session)["calls"]
+
+
+def _claim_and_process(session, email, *, over_budget: bool = False) -> str:
     """Shared by the normal fetch loop and the stale-recovery sweep: filter,
     claim, process, and isolate a failure to just this email.
 
     Returns "processed", "failed", "filtered_out" (rejected by the
     content-based pre-filter specifically — the caller tallies this
     separately, it's what filter-pass-rate/anomaly tracking cares about),
-    or "skipped" (a calendar invite, or already claimed/terminal
-    elsewhere — deliberate exclusions, not a filter signal).
+    "skipped" (a calendar invite, or already claimed/terminal elsewhere —
+    deliberate exclusions, not a filter signal), or "deferred" (would have
+    cost a Gemini call but the daily budget is spent — never claimed, so a
+    later run picks it up untouched; checked after the filter so an email
+    that costs nothing is still counted as filtered/skipped, not deferred).
     """
     if email.has_calendar_invite:
         # A real .ics calendar invite — Gmail/Calendar already surfaces
@@ -159,6 +205,9 @@ def _claim_and_process(session, email) -> str:
 
     if not is_deadline_candidate(email.subject, email.body_text):
         return "filtered_out"  # pre-filter: never even claimed, cheapest possible skip
+
+    if over_budget:
+        return "deferred"
 
     if not repository.try_claim_email(session, email.id, email.thread_id, email.subject):
         return "skipped"  # claimed elsewhere, or a live attempt already in flight
