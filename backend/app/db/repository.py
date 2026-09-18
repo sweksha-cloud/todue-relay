@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.config import DUPLICATE_EVENT_NAME_SIMILARITY_THRESHOLD, STALE_CLAIM_MINUTES
+from app.config import DUPLICATE_EVENT_NAME_SIMILARITY_THRESHOLD, MAX_ATTEMPTS_PER_EMAIL, STALE_CLAIM_MINUTES
 from app.date_utils import has_explicit_time
 from app.db.models import ActionType, Confidence, OAuthToken, PipelineRun, ProcessedEmail, ProcessingStatus, RunStatus
 from app.schemas import ExtractionResult
@@ -42,7 +42,13 @@ def save_oauth_token(session: Session, key: str, token_json: str) -> None:
 def try_claim_email(session: Session, email_id: str, thread_id: str, email_subject: str) -> bool:
     """Attempt to claim an email for processing. Returns True if this call
     now owns it (safe to call the LLM), False if it's already terminal
-    (completed/skipped) or being worked on by a still-live attempt.
+    (completed/skipped), being worked on by a still-live attempt, or FAILED
+    and out of retries (attempt_count >= MAX_ATTEMPTS_PER_EMAIL).
+
+    The retry cap applies only to the FAILED branch. A stale PROCESSING
+    claim (worker hard-crashed) is still always reclaimable: if it then
+    fails, it lands in FAILED with its incremented attempt_count and the
+    cap takes over from there.
 
     This issues a raw UPSERT, bypassing the ORM unit-of-work — if the
     caller already holds a Python ProcessedEmail object for this email_id
@@ -68,7 +74,10 @@ def try_claim_email(session: Session, email_id: str, thread_id: str, email_subje
             "attempt_count": ProcessedEmail.attempt_count + 1,
         },
         where=(
-            (ProcessedEmail.status == ProcessingStatus.FAILED)
+            (
+                (ProcessedEmail.status == ProcessingStatus.FAILED)
+                & (ProcessedEmail.attempt_count < MAX_ATTEMPTS_PER_EMAIL)
+            )
             | (
                 (ProcessedEmail.status == ProcessingStatus.PROCESSING)
                 & (ProcessedEmail.claimed_at < stale_before)
@@ -269,6 +278,10 @@ def get_recoverable_stuck_email_ids(session: Session) -> list[str]:
     or silently never retried (FAILED). This powers a direct-by-id recovery
     sweep (see pipeline.py) that doesn't depend on the email still matching
     that search.
+
+    A FAILED row that's out of retries (attempt_count >= MAX_ATTEMPTS_PER_EMAIL)
+    is excluded — try_claim_email would refuse it anyway, so fetching it from
+    Gmail every run would be pure wasted work.
     """
     stale_before = datetime.now(timezone.utc) - timedelta(minutes=STALE_CLAIM_MINUTES)
     stmt = select(ProcessedEmail.email_id).where(
@@ -276,7 +289,10 @@ def get_recoverable_stuck_email_ids(session: Session) -> list[str]:
             (ProcessedEmail.status == ProcessingStatus.PROCESSING)
             & (ProcessedEmail.claimed_at < stale_before)
         )
-        | (ProcessedEmail.status == ProcessingStatus.FAILED)
+        | (
+            (ProcessedEmail.status == ProcessingStatus.FAILED)
+            & (ProcessedEmail.attempt_count < MAX_ATTEMPTS_PER_EMAIL)
+        )
     )
     return list(session.execute(stmt).scalars().all())
 

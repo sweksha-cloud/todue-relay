@@ -80,6 +80,60 @@ class TestTryClaimEmail:
         assert repository.try_claim_email(db_session, "e1", "t1", "subject") is True
 
 
+def _fail_n_times(db_session, email_id, n):
+    """Claim then fail an email n times — leaves it FAILED with attempt_count == n."""
+    for _ in range(n):
+        assert repository.try_claim_email(db_session, email_id, "t1", "subject") is True
+        repository.mark_failed(db_session, email_id, "boom")
+
+
+class TestRetryCap:
+    """A deterministically failing email must stop being retried (and stop
+    costing a Gemini call every run) once it hits MAX_ATTEMPTS_PER_EMAIL.
+    """
+
+    def test_failed_email_below_cap_is_still_reclaimable(self, db_session, monkeypatch):
+        monkeypatch.setattr(repository, "MAX_ATTEMPTS_PER_EMAIL", 3)
+        _fail_n_times(db_session, "e1", 2)  # attempt_count == 2, cap is 3
+
+        assert repository.try_claim_email(db_session, "e1", "t1", "subject") is True
+
+    def test_failed_email_at_cap_is_not_reclaimed(self, db_session, monkeypatch):
+        monkeypatch.setattr(repository, "MAX_ATTEMPTS_PER_EMAIL", 3)
+        _fail_n_times(db_session, "e1", 3)  # attempt_count == 3 == cap
+
+        assert repository.try_claim_email(db_session, "e1", "t1", "subject") is False
+
+        row = db_session.get(ProcessedEmail, "e1")
+        db_session.refresh(row)
+        assert row.status == ProcessingStatus.FAILED  # parked visibly, not hidden
+        assert row.error_message == "boom"
+        assert row.attempt_count == 3  # the refused claim didn't increment it
+
+    def test_stale_processing_claim_is_still_reclaimable_past_the_cap(self, db_session, monkeypatch):
+        """The cap is FAILED-only: a hard-crashed worker (row left
+        PROCESSING) must stay recoverable no matter its attempt_count.
+        """
+        monkeypatch.setattr(repository, "MAX_ATTEMPTS_PER_EMAIL", 3)
+        _fail_n_times(db_session, "e1", 2)
+        assert repository.try_claim_email(db_session, "e1", "t1", "subject") is True  # attempt 3, PROCESSING
+
+        row = db_session.get(ProcessedEmail, "e1")
+        row.claimed_at = datetime.now(timezone.utc) - timedelta(minutes=999)
+        db_session.commit()
+
+        assert repository.try_claim_email(db_session, "e1", "t1", "subject") is True
+
+    def test_recovery_sweep_excludes_failed_rows_at_cap(self, db_session, monkeypatch):
+        monkeypatch.setattr(repository, "MAX_ATTEMPTS_PER_EMAIL", 3)
+        _fail_n_times(db_session, "retryable", 2)
+        _fail_n_times(db_session, "exhausted", 3)
+
+        ids = repository.get_recoverable_stuck_email_ids(db_session)
+
+        assert ids == ["retryable"]
+
+
 class TestMarkCompleted:
     def test_high_confidence_deadline_with_event(self, db_session):
         repository.try_claim_email(db_session, "e1", "t1", "subject")
