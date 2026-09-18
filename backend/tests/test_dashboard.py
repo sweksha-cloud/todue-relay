@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.db import repository
 from app.db.models import RunStatus
+from app import main, pipeline
 from app.db.session import get_db
 from app.main import app
 
@@ -62,3 +63,72 @@ class TestDeferredVisibility:
         html = client.get("/metrics").text
 
         assert "<td>—</td>" in html
+
+
+def _fake_dry_run(calls, **result):
+    """Stands in for run_pipeline; records how it was called."""
+    def fake(**kwargs):
+        calls.append(kwargs)
+        return {"would_process": 0, "deferred": 0, **result}
+    return fake
+
+
+class TestCheckWaitingMail:
+    def test_the_button_is_on_the_main_page(self, client):
+        assert 'hx-post="/waiting"' in client.get("/").text
+
+    def test_it_only_ever_runs_the_dry_run_path(self, client, monkeypatch):
+        """The safety property: a page click must never be a real run, which
+        would spend Gemini quota and change pipeline state.
+        """
+        calls = []
+        monkeypatch.setattr(pipeline, "run_pipeline", _fake_dry_run(calls, would_process=1))
+
+        client.post("/waiting")
+
+        assert calls == [{"dry_run": True}]
+
+    def test_reports_waiting_and_held_back_counts(self, client, monkeypatch):
+        monkeypatch.setattr(pipeline, "run_pipeline", _fake_dry_run([], would_process=2, deferred=1))
+
+        response = client.post("/waiting")
+
+        assert response.status_code == 200
+        assert "<strong>3</strong> waiting" in response.text  # 2 next run + 1 held back
+        assert "2 will be sent to Gemini on the next run" in response.text
+        assert "1 held back by the daily limit" in response.text
+
+    def test_zero_waiting_is_said_plainly(self, client, monkeypatch):
+        monkeypatch.setattr(pipeline, "run_pipeline", _fake_dry_run([]))
+
+        text = client.post("/waiting").text
+
+        assert "<strong>0</strong> waiting" in text
+        assert "held back" not in text
+
+    def test_a_failure_is_shown_not_raised(self, client, monkeypatch):
+        def broken(**kwargs):
+            raise RuntimeError("gmail is down")
+
+        monkeypatch.setattr(pipeline, "run_pipeline", broken)
+
+        response = client.post("/waiting")
+
+        assert response.status_code == 200  # htmx would refuse to swap a 5xx
+        assert "Couldn't check" in response.text
+        assert "gmail is down" in response.text
+
+    def test_error_text_is_escaped(self, client, monkeypatch):
+        def broken(**kwargs):
+            raise ValueError("<script>alert(1)</script>")
+
+        monkeypatch.setattr(pipeline, "run_pipeline", broken)
+
+        text = client.post("/waiting").text
+
+        assert "<script>alert(1)</script>" not in text
+        assert "&lt;script&gt;" in text
+
+    def test_get_is_not_allowed(self, client):
+        """POST-only, so a crawler or link prefetch can't trigger a Gmail read."""
+        assert client.get("/waiting").status_code == 405
