@@ -11,6 +11,10 @@
       Last run <strong>{{ latest_run.status.value }}</strong> — {{ (latest_run.finished_at | to_local).strftime("%b %d, %Y %I:%M %p") if latest_run.finished_at else "?" }}
       &middot; {{ latest_run.emails_processed }} processed, {{ latest_run.emails_failed }} failed
       {% if latest_run.error_message %}&middot; {{ latest_run.error_message }}{% endif %}
+      {% if latest_run.emails_deferred %}
+        &middot; <span class="badge badge-review" title="Passed the pre-filter but weren't sent to Gemini: today's call budget (GEMINI_DAILY_QUOTA minus GEMINI_DAILY_RESERVE) was spent. They are untouched and a later run picks them up.">{{ latest_run.emails_deferred }} deferred — daily Gemini quota spent</span>
+        <span class="verdict">— will be picked up after the quota resets at {{ (llm_usage.resets_at | to_local).strftime("%I:%M %p") }} your time</span>
+      {% endif %}
     {% endif %}
   {% else %}
     <span class="run-dot none"></span> No runs yet

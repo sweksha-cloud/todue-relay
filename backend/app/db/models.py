@@ -146,6 +146,12 @@ class PipelineRun(Base):
     # distorted by a run that happens to re-see a lot of old, already-done
     # mail rather than genuinely rejecting new mail.
     emails_already_terminal: Mapped[int] = mapped_column(Integer, default=0)
+    # Emails that passed the pre-filter but were NOT claimed this run because
+    # the daily Gemini call budget was spent (pipeline.run_pipeline). Left
+    # untouched for a later run, so they leave no other trace — this counter is
+    # the only record that mail is waiting. Added 2026-09-18; on the live Neon
+    # DB via ALTER TABLE (no migration tool), see claude/tradeoffs/daily-call-budget.md.
+    emails_deferred: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 

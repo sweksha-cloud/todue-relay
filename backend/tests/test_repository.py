@@ -541,3 +541,23 @@ class TestFinishRunFilterCounts:
         row = db_session.get(PipelineRun, run.id)
         assert row.emails_filtered_out == 0
         assert row.emails_already_terminal == 0
+
+
+class TestFinishRunDeferred:
+    def test_records_the_deferred_count(self, db_session):
+        run = repository.start_run(db_session)
+        repository.finish_run(
+            db_session, run.id, status=RunStatus.SUCCESS,
+            emails_fetched=10, emails_processed=2, emails_failed=0, emails_deferred=4,
+        )
+
+        assert db_session.get(PipelineRun, run.id).emails_deferred == 4
+
+    def test_defaults_to_zero(self, db_session):
+        run = repository.start_run(db_session)
+        repository.finish_run(
+            db_session, run.id, status=RunStatus.SUCCESS,
+            emails_fetched=1, emails_processed=1, emails_failed=0,
+        )
+
+        assert db_session.get(PipelineRun, run.id).emails_deferred == 0
