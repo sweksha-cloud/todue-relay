@@ -5,6 +5,7 @@ flow, one cached token, instead of a separate one per API.
 from __future__ import annotations
 
 import json
+import logging
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -13,6 +14,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from app.config import GMAIL_CLIENT_SECRET_PATH, GMAIL_TOKEN_PATH, GOOGLE_SCOPES
 from app.db import repository
 from app.db.session import engine, get_session
+
+logger = logging.getLogger(__name__)
 
 OAUTH_TOKEN_KEY = "google"
 
@@ -39,13 +42,22 @@ def _load_cached_token_json() -> str | None:
 
 def _save_token(creds: Credentials) -> None:
     token_json = creds.to_json()
-    GMAIL_TOKEN_PATH.write_text(token_json)  # local-dev convenience/mirror
+    # Database first: it's the source of truth, so a failure writing the
+    # local mirror below can never cost us the refreshed token.
     if engine is not None:
         session = get_session()
         try:
             repository.save_oauth_token(session, OAUTH_TOKEN_KEY, token_json)
         finally:
             session.close()
+    # Local-dev convenience/mirror only, best effort: on a read-only
+    # filesystem (AWS Lambda, where only /tmp is writable) this raises, and
+    # that must not fail an otherwise-successful token refresh.
+    try:
+        GMAIL_TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+        GMAIL_TOKEN_PATH.write_text(token_json)
+    except OSError:
+        logger.warning("Could not write the local token mirror at %s; the database copy is saved", GMAIL_TOKEN_PATH)
 
 
 def get_google_credentials() -> Credentials:
