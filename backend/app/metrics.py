@@ -12,9 +12,11 @@ Known precision gaps, accepted rather than solved with new schema:
   into a later week. Approximate, fine as a trend; a dedicated
   `corrected_at` column would fix it but was judged not worth a schema
   change at this project's scale.
-- GEMINI_DAILY_QUOTA (app/config.py) is unconfirmed for this account: only
-  the per-minute limit (5) has ever been seen in a real 429. See
-  claude/tradeoffs/gemini-quota-tracking.md.
+- The count only sees calls THIS pipeline made. GEMINI_DAILY_QUOTA (20,
+  confirmed in AI Studio) is per project and model, so anything else using
+  the same project (AI Studio playground, another script) spends it too and
+  is invisible here — on 2026-09-18 Google showed 20/20 used while this
+  count read 15. See claude/tradeoffs/gemini-quota-tracking.md.
 
 LLM usage is NOT subject to the updated_at problem: it's summed from
 pipeline_runs (see daily_llm_usage), whose started_at is written once.

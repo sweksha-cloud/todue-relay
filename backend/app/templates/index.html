@@ -42,7 +42,7 @@
     <div style="background:{{ '#e5484d' if llm_usage.warning else '#1a6fd1' }}; height:100%; width:{{ ([llm_usage.pct, 100]|min)|round(1) if llm_usage.pct is not none else 0 }}%;"></div>
   </div>
   <p class="verdict" style="margin-top:8px; margin-bottom:0;">
-    {{ llm_usage.calls_this_month }} calls this month. The daily quota is unconfirmed —
+    {{ llm_usage.calls_this_month }} calls this month. Counts this pipeline's calls only —
     <a href="/metrics">see Metrics</a>.
   </p>
 </div>
