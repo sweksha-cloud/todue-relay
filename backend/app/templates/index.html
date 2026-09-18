@@ -51,6 +51,16 @@
   </p>
 </div>
 
+<div class="card">
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+    <div id="waiting-result">
+      <span class="verdict">Emails waiting to be processed — check on demand. Reads Gmail only; costs no Gemini quota.</span>
+    </div>
+    <button class="vote" hx-post="/waiting" hx-target="#waiting-result" hx-swap="innerHTML" hx-disabled-elt="this" hx-indicator="#waiting-spinner">Check waiting mail</button>
+  </div>
+  <div id="waiting-spinner" class="htmx-indicator verdict" style="margin-top:6px;">Checking Gmail…</div>
+</div>
+
 <div class="card overflow-x">
   <table>
     <thead>

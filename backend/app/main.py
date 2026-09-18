@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from app import calendar_client, metrics
+from app import calendar_client, metrics, pipeline
 from app.date_utils import detect_local_timezone, to_local
 from app.db import repository
 from app.db.models import Base, ProcessedEmail, ProcessingStatus
@@ -91,6 +91,31 @@ def dashboard(
             "action_page": action_page,
             "total_action_pages": total_action_pages,
         },
+    )
+
+
+@app.post("/waiting", response_class=HTMLResponse)
+def check_waiting(request: Request):
+    """On-demand "how many emails are waiting" — the dashboard's button for
+    the same read-only check as `python -m scripts.run_pipeline --dry-run`
+    (claude/tradeoffs/dry-run-mode.md). ALWAYS a dry run, hardcoded: it reads
+    Gmail and the database, makes no Gemini call, claims nothing, and writes
+    nothing, so clicking it can never spend quota or change pipeline state.
+    (tests/test_dashboard.py pins that dry_run=True is the only way it's called.)
+
+    POST, not GET, so a link prefetcher or crawler can't trigger a Gmail read.
+    Unauthenticated like the rest of the dashboard — fine while local-only; it
+    must be protected before any public hosting (see claude/tradeoffs/security-review.md).
+    A failure is rendered as a message, not raised: htmx doesn't swap 4xx/5xx.
+    """
+    try:
+        result, error = pipeline.run_pipeline(dry_run=True), None
+    except Exception as e:  # noqa: BLE001 - shown to the user, not swallowed
+        result, error = None, f"{type(e).__name__}: {e}"
+    return templates.TemplateResponse(
+        request,
+        "_waiting.html",
+        {"result": result, "error": error, "checked_at": datetime.now(timezone.utc)},
     )
 
 

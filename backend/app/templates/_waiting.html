@@ -1,0 +1,9 @@
+{% if error %}
+  <span class="badge badge-failed">Couldn't check</span>
+  <span class="verdict">{{ error[:200] }}</span>
+{% else %}
+  <strong>{{ result.would_process + result.deferred }}</strong> waiting
+  <span class="verdict">&mdash; {{ result.would_process }} will be sent to Gemini on the next run{% if result.deferred %}, {{ result.deferred }} held back by the daily limit{% endif %}</span>
+  {% if result.deferred %}<span class="badge badge-review">daily Gemini quota spent</span>{% endif %}
+  <div class="verdict">Checked {{ (checked_at | to_local).strftime("%I:%M %p") }} &middot; reads Gmail only &mdash; no Gemini calls, nothing changed</div>
+{% endif %}
