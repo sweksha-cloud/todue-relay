@@ -5,7 +5,10 @@
 #
 # Versions must match requirements.txt for every package both files list
 # (tests/test_requirements_sync.py enforces it), so Lambda runs the same
-# versions CI tests. boto3 is not listed: the Lambda Python runtime provides it.
+# versions CI tests. The one exception is boto3, which only Lambda needs (to
+# read Secrets Manager); it is bundled rather than relying on the runtime's
+# copy because AWS recommends packaging the SDK your code uses, so its version
+# doesn't change under you when Lambda updates the runtime.
 google-api-python-client==2.149.0
 google-auth-httplib2==0.2.0
 google-auth-oauthlib==1.2.1
@@ -15,3 +18,4 @@ pydantic==2.13.5
 python-dateutil==2.9.0.post0
 SQLAlchemy==2.0.52
 psycopg[binary]==3.2.10
+boto3==1.43.98

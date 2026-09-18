@@ -32,6 +32,14 @@ docker run --rm \
   "public.ecr.aws/lambda/python:$PY_VERSION" \
   install --quiet --no-cache-dir --target /pkg -r /src/requirements-lambda.txt
 
+# google-api-python-client bundles descriptions of ~520 Google APIs (~77 MB
+# unzipped); the pipeline builds only Gmail v1 and Calendar v3 clients
+# (app/gmail_client.py, app/calendar_client.py). Keep just those. If code ever
+# builds another Google API client, add its document to the keep-list below.
+DOCS="$OUT/pkg/googleapiclient/discovery_cache/documents"
+find "$DOCS" -type f ! -name gmail.v1.json ! -name calendar.v3.json -delete
+test -f "$DOCS/gmail.v1.json" && test -f "$DOCS/calendar.v3.json"
+
 cp -R app lambda_handler.py "$OUT/pkg/"
 find "$OUT/pkg" -name __pycache__ -prune -exec rm -rf {} +
 

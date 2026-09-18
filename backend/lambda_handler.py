@@ -45,7 +45,7 @@ def load_secrets(client=None) -> None:
         return
 
     if client is None:
-        import boto3  # provided by the Lambda Python runtime; imported lazily
+        import boto3  # bundled in the package (requirements-lambda.txt); lazy so tests need no boto3
 
         client = boto3.client("secretsmanager")
 

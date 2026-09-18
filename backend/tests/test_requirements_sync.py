@@ -1,13 +1,15 @@
 """requirements-lambda.txt is a hand-kept subset of requirements.txt. Lambda
 must run the same versions CI tests, so a package listed in both has to
 carry the same pin, and the Lambda file may not list anything the main file
-doesn't (that would be an untested dependency).
+doesn't (that would be an untested dependency) apart from LAMBDA_ONLY.
 """
 
 import re
 from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parent.parent
+# Packages only the Lambda package needs (the dashboard/CI never import them).
+LAMBDA_ONLY = {"boto3"}
 PIN = re.compile(r"^([A-Za-z0-9_.\-]+)(?:\[[^\]]+\])?==(\S+)$")
 
 
@@ -27,9 +29,9 @@ def test_lambda_requirements_are_a_pinned_subset_of_main():
     main, lam = _pins("requirements.txt"), _pins("requirements-lambda.txt")
 
     assert lam, "requirements-lambda.txt lists nothing"
-    extra = set(lam) - set(main)
+    extra = set(lam) - set(main) - LAMBDA_ONLY
     assert not extra, f"in requirements-lambda.txt but not requirements.txt: {sorted(extra)}"
-    drifted = {p: (lam[p], main[p]) for p in lam if lam[p] != main[p]}
+    drifted = {p: (lam[p], main[p]) for p in lam if p in main and lam[p] != main[p]}
     assert not drifted, f"version drift (lambda, main): {drifted}"
 
 
