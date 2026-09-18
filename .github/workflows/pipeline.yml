@@ -12,9 +12,23 @@ on:
 permissions:
   contents: read
 
+# One run at a time. A manual dispatch overlapping a scheduled run (or late
+# scheduled runs bunching up) queues instead of running side by side. This
+# matters for the per-day Gemini call budget, which only counts *finished*
+# runs: two overlapping runs would each think the budget was still free.
+# cancel-in-progress is false on purpose — never kill a run mid-email.
+concurrency:
+  group: run-deadline-pipeline
+  cancel-in-progress: false
+
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+    # A run is pacing-bound (13s per Gemini call: 50 emails ~ 11 min worst case,
+    # far less under the daily budget). GitHub's default is 6 hours — a hung API
+    # call shouldn't hold a runner, or the concurrency slot above, that long. A
+    # run killed by this is safe: its claims go stale and are retried.
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: backend
