@@ -146,7 +146,14 @@ def find_duplicate_deadline(
         conditions.append(func.date(ProcessedEmail.extraction_deadline_parsed) == same_day)
 
     candidates = session.execute(select(ProcessedEmail).where(*conditions)).scalars().all()
+    return _best_name_match(candidates, event_name)
 
+
+def _best_name_match(candidates: list[ProcessedEmail], event_name: str) -> ProcessedEmail | None:
+    """Shared by find_duplicate_deadline and find_duplicate_action_item:
+    the single best normalized-name match among candidates, if it clears
+    DUPLICATE_EVENT_NAME_SIMILARITY_THRESHOLD.
+    """
     target = _normalize_event_name(event_name)
     best_match: ProcessedEmail | None = None
     best_score = 0.0
@@ -163,6 +170,52 @@ def find_duplicate_deadline(
     if best_match is not None and best_score >= DUPLICATE_EVENT_NAME_SIMILARITY_THRESHOLD:
         return best_match
     return None
+
+
+def find_duplicate_action_item(
+    session: Session, event_name: str, exclude_email_id: str
+) -> ProcessedEmail | None:
+    """Look for an already-tracked needs_reply/unclear action item with a
+    similar-sounding name — the dateless counterpart to
+    find_duplicate_deadline (claude/post-prod/duplicate-deadline-detection.md).
+
+    No date to restrict the search by, so this always searches every
+    tracked action item, unbounded — same "cheap at this project's scale"
+    reasoning as find_duplicate_deadline's unbounded lookback. Only matches
+    against rows that aren't themselves already folded into an earlier one
+    (duplicate_of_email_id is null) — a new follow-up should always fold
+    onto the original, current entry, not a stale link in a chain.
+    """
+    candidates = (
+        session.execute(
+            select(ProcessedEmail).where(
+                ProcessedEmail.status == ProcessingStatus.COMPLETED,
+                ProcessedEmail.extraction_action_type.in_([ActionType.NEEDS_REPLY, ActionType.UNCLEAR]),
+                ProcessedEmail.duplicate_of_email_id.is_(None),
+                ProcessedEmail.email_id != exclude_email_id,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return _best_name_match(candidates, event_name)
+
+
+def fold_action_item(session: Session, old_email_id: str, new_email_id: str, new_source_context: str) -> None:
+    """Fold a follow-up email into an already-tracked action item instead of
+    it becoming a second dashboard entry — append the new context (keeps
+    the full audit trail, same principle as everywhere else in this
+    project) and let `updated_at`'s auto-bump (see ProcessedEmail) act as
+    the "last mentioned" timestamp list_action_items sorts by, so a
+    still-live action item resurfaces instead of going stale and silent.
+    """
+    row = session.get(ProcessedEmail, old_email_id)
+    if row is None:
+        raise ValueError(f"No such email {old_email_id}")
+
+    today = datetime.now(timezone.utc).strftime("%b %d, %Y")
+    row.extraction_source_context = f"{row.extraction_source_context}\n\nFollow-up ({today}): {new_source_context}"
+    session.commit()
 
 
 def mark_superseded(session: Session, old_email_id: str, new_email_id: str) -> None:
@@ -199,6 +252,33 @@ def mark_failed(session: Session, email_id: str, error: str) -> None:
     row.status = ProcessingStatus.FAILED
     row.error_message = error
     session.commit()
+
+
+def get_recoverable_stuck_email_ids(session: Session) -> list[str]:
+    """Non-terminal rows (PROCESSING or FAILED) that `try_claim_email`
+    would happily reclaim *if* their email showed up in a fetch batch again
+    — a stale PROCESSING claim (worker crashed mid-email) or a plain FAILED
+    row (eligible for retry unconditionally, same as the normal fetch loop
+    already does for anything still in the batch).
+
+    Normal recovery relies on exactly that: the email showing up again in a
+    future run's fetch, so `try_claim_email` can reclaim it. But a fetch
+    batch is always `is:unread newer_than:FETCH_WINDOW_DAYS` — a row whose
+    email gets read or ages out of that window before a retry succeeds is
+    never fetched again and would otherwise stay stuck forever (PROCESSING)
+    or silently never retried (FAILED). This powers a direct-by-id recovery
+    sweep (see pipeline.py) that doesn't depend on the email still matching
+    that search.
+    """
+    stale_before = datetime.now(timezone.utc) - timedelta(minutes=STALE_CLAIM_MINUTES)
+    stmt = select(ProcessedEmail.email_id).where(
+        (
+            (ProcessedEmail.status == ProcessingStatus.PROCESSING)
+            & (ProcessedEmail.claimed_at < stale_before)
+        )
+        | (ProcessedEmail.status == ProcessingStatus.FAILED)
+    )
+    return list(session.execute(stmt).scalars().all())
 
 
 def get_terminal_email_ids(session: Session, email_ids: list[str]) -> set[str]:
@@ -370,20 +450,27 @@ def get_correction_rate(session: Session) -> float | None:
 
 
 def _action_items_filter():
-    return ProcessedEmail.extraction_action_type.in_([ActionType.NEEDS_REPLY, ActionType.UNCLEAR])
+    # duplicate_of_email_id is set on a follow-up that got folded into an
+    # earlier action item (find_duplicate_action_item/fold_action_item) —
+    # excluded here so the fold doesn't still show up as a second entry.
+    return ProcessedEmail.extraction_action_type.in_([ActionType.NEEDS_REPLY, ActionType.UNCLEAR]) & (
+        ProcessedEmail.duplicate_of_email_id.is_(None)
+    )
 
 
 def list_action_items(session: Session, limit: int = 25, offset: int = 0) -> list[ProcessedEmail]:
     """One page of needs_reply / unclear extractions — no fixed date, so no
-    calendar event, but still worth surfacing. Newest first; the dashboard
-    groups these by the day processed (a page can split a day across two
-    pages at the boundary — accepted, minor UX quirk, not worth the extra
-    complexity of day-aligned paging).
+    calendar event, but still worth surfacing. Most recently *relevant*
+    first (updated_at, which a fold bumps — see fold_action_item — so a
+    still-live item resurfaces instead of going stale), not just most
+    recently first-seen. The dashboard groups these by that same day (a
+    page can split a day across two pages at the boundary — accepted,
+    minor UX quirk, not worth the extra complexity of day-aligned paging).
     """
     stmt = (
         select(ProcessedEmail)
         .where(_action_items_filter())
-        .order_by(ProcessedEmail.created_at.desc())
+        .order_by(ProcessedEmail.updated_at.desc())
         .limit(limit)
         .offset(offset)
     )

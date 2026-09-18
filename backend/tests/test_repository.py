@@ -12,14 +12,14 @@ from app.schemas import ExtractionResult
 
 def _extraction(
     email_id="e1", confidence="high", action_type="deadline", deadline=None,
-    is_recurring=False, recurrence_rule=None,
+    is_recurring=False, recurrence_rule=None, event_name="Test event", source_context="test",
 ):
     return ExtractionResult(
         email_id=email_id,
-        event_name="Test event",
+        event_name=event_name,
         deadline_date_raw="Sep 20",
         deadline_date=deadline or datetime.now(timezone.utc) + timedelta(days=5),
-        source_context="test",
+        source_context=source_context,
         confidence=confidence,
         action_type=action_type,
         is_recurring=is_recurring,
@@ -268,6 +268,119 @@ class TestMarkCompletedDuplicateFields:
         row = db_session.get(ProcessedEmail, "e2")
         assert row.duplicate_of_email_id == "e1"
         assert row.date_changed_from == old_date
+
+
+class TestFindDuplicateActionItem:
+    def test_similar_name_is_matched(self, db_session):
+        repository.try_claim_email(db_session, "e1", "t1", "s1")
+        repository.mark_completed(
+            db_session, "e1",
+            _extraction(email_id="e1", action_type="needs_reply", event_name="Interview scheduling"),
+            calendar_event_id=None,
+        )
+
+        match = repository.find_duplicate_action_item(db_session, "Interview scheduling", "e2")
+
+        assert match is not None
+        assert match.email_id == "e1"
+
+    def test_dissimilar_name_is_not_matched(self, db_session):
+        repository.try_claim_email(db_session, "e1", "t1", "s1")
+        repository.mark_completed(
+            db_session, "e1",
+            _extraction(email_id="e1", action_type="needs_reply", event_name="Interview scheduling"),
+            calendar_event_id=None,
+        )
+
+        match = repository.find_duplicate_action_item(db_session, "Completely unrelated club social", "e2")
+
+        assert match is None
+
+    def test_deadline_rows_are_not_candidates(self, db_session):
+        repository.try_claim_email(db_session, "e1", "t1", "s1")
+        repository.mark_completed(
+            db_session, "e1",
+            _extraction(email_id="e1", action_type="deadline", event_name="Interview scheduling"),
+            calendar_event_id="cal-1",
+        )
+
+        match = repository.find_duplicate_action_item(db_session, "Interview scheduling", "e2")
+
+        assert match is None
+
+    def test_already_folded_row_is_not_a_candidate(self, db_session):
+        """A new follow-up should fold onto the original, current entry —
+        not a stale link further back in a chain of follow-ups."""
+        repository.try_claim_email(db_session, "e1", "t1", "s1")
+        repository.mark_completed(
+            db_session, "e1",
+            _extraction(email_id="e1", action_type="needs_reply", event_name="Interview scheduling"),
+            calendar_event_id=None,
+        )
+        repository.try_claim_email(db_session, "e2", "t2", "s2")
+        repository.mark_completed(
+            db_session, "e2",
+            _extraction(email_id="e2", action_type="needs_reply", event_name="Interview scheduling"),
+            calendar_event_id=None, duplicate_of_email_id="e1",
+        )
+
+        match = repository.find_duplicate_action_item(db_session, "Interview scheduling", "e3")
+
+        assert match is not None
+        assert match.email_id == "e1"
+
+    def test_excludes_self(self, db_session):
+        repository.try_claim_email(db_session, "e1", "t1", "s1")
+        repository.mark_completed(
+            db_session, "e1",
+            _extraction(email_id="e1", action_type="needs_reply", event_name="Interview scheduling"),
+            calendar_event_id=None,
+        )
+
+        match = repository.find_duplicate_action_item(db_session, "Interview scheduling", "e1")
+
+        assert match is None
+
+
+class TestFoldActionItem:
+    def test_appends_context_and_bumps_updated_at(self, db_session):
+        repository.try_claim_email(db_session, "e1", "t1", "s1")
+        repository.mark_completed(
+            db_session, "e1",
+            _extraction(
+                email_id="e1", action_type="needs_reply", event_name="Interview scheduling",
+                source_context="What times work for you?",
+            ),
+            calendar_event_id=None,
+        )
+        original_updated_at = db_session.get(ProcessedEmail, "e1").updated_at
+
+        repository.fold_action_item(db_session, "e1", "e2", "Just checking in, did you see my last email?")
+
+        row = db_session.get(ProcessedEmail, "e1")
+        assert "What times work for you?" in row.extraction_source_context
+        assert "Just checking in, did you see my last email?" in row.extraction_source_context
+        assert row.updated_at >= original_updated_at
+
+    def test_folded_row_excluded_from_action_items_list(self, db_session):
+        repository.try_claim_email(db_session, "e1", "t1", "s1")
+        repository.mark_completed(
+            db_session, "e1",
+            _extraction(email_id="e1", action_type="needs_reply", event_name="Interview scheduling"),
+            calendar_event_id=None,
+        )
+        repository.try_claim_email(db_session, "e2", "t2", "s2")
+        repository.fold_action_item(db_session, "e1", "e2", "follow-up")
+        repository.mark_completed(
+            db_session, "e2",
+            _extraction(email_id="e2", action_type="needs_reply", event_name="Interview scheduling"),
+            calendar_event_id=None, duplicate_of_email_id="e1",
+        )
+
+        items = repository.list_action_items(db_session)
+
+        assert len(items) == 1
+        assert items[0].email_id == "e1"
 
 
 class TestActionItemsVsRecentEmails:

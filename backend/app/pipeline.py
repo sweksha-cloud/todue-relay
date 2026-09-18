@@ -32,7 +32,7 @@ from app.db import repository
 from app.db.models import RunStatus
 from app.db.session import get_session
 from app.filters import contains_reschedule_language, is_deadline_candidate
-from app.gmail_client import fetch_recent_messages, get_gmail_service
+from app.gmail_client import fetch_messages_by_ids, fetch_recent_messages, get_gmail_service
 from app.llm_client import extract_deadline
 
 logger = logging.getLogger(__name__)
@@ -64,19 +64,34 @@ def run_pipeline() -> dict:
             if email.id in terminal_ids:
                 continue  # already completed/skipped in a prior run
 
-            if not is_deadline_candidate(email.subject, email.body_text):
-                continue  # pre-filter: never even claimed, cheapest possible skip
-
-            if not repository.try_claim_email(session, email.id, email.thread_id, email.subject):
-                continue  # claimed elsewhere, or a live attempt already in flight
-
-            try:
-                _process_one(session, email)
+            outcome = _claim_and_process(session, email)
+            if outcome == "processed":
                 processed += 1
-            except Exception as e:  # noqa: BLE001 - intentional: isolate one bad email from the batch
-                logger.exception("Failed processing email %s", email.id)
-                repository.mark_failed(session, email.id, f"{type(e).__name__}: {e}")
+            elif outcome == "failed":
                 failed += 1
+
+        # Recovery sweep: a stuck PROCESSING (worker crashed) or FAILED
+        # (eligible for retry) row normally gets picked back up once its
+        # email shows up again in the fetch above. But that fetch is always
+        # is:unread + FETCH_WINDOW_DAYS — if the email gets read or ages out
+        # of that window first, it would never be fetched again and stay
+        # stuck (or silently un-retried) forever. Fetch those ids directly
+        # by id instead, bypassing the search entirely. Skip anything
+        # already handled by the loop above, so a row that's both still in
+        # today's fetch batch and freshly re-failed there isn't attempted
+        # twice in the same run.
+        already_seen_ids = {m.id for m in messages}
+        stuck_ids = [
+            i for i in repository.get_recoverable_stuck_email_ids(session) if i not in already_seen_ids
+        ]
+        if stuck_ids:
+            logger.info("Recovering %d stuck email(s) outside the normal fetch: %s", len(stuck_ids), stuck_ids)
+            for email in fetch_messages_by_ids(service, stuck_ids):
+                outcome = _claim_and_process(session, email)
+                if outcome == "processed":
+                    processed += 1
+                elif outcome == "failed":
+                    failed += 1
 
         repository.finish_run(
             session,
@@ -104,6 +119,39 @@ def run_pipeline() -> dict:
     return {"fetched": fetched, "processed": processed, "failed": failed}
 
 
+def _claim_and_process(session, email) -> str:
+    """Shared by the normal fetch loop and the stale-recovery sweep: filter,
+    claim, process, and isolate a failure to just this email.
+
+    Returns "processed", "failed", or "skipped" (a calendar invite, didn't
+    pass the pre-filter, or already claimed/terminal elsewhere) — the
+    caller tallies the first two.
+    """
+    if email.has_calendar_invite:
+        # A real .ics calendar invite — Gmail/Calendar already surfaces
+        # this natively (RSVP banner, possibly auto-added to the calendar)
+        # independent of this pipeline. Extracting a deadline/action item
+        # from it too would create a redundant second entry for something
+        # already handled — see gmail_client._has_calendar_invite and
+        # claude/tradeoffs/calendar-invite-emails.md. Never even claimed,
+        # same cheapest-possible-skip pattern as the pre-filter below.
+        return "skipped"
+
+    if not is_deadline_candidate(email.subject, email.body_text):
+        return "skipped"  # pre-filter: never even claimed, cheapest possible skip
+
+    if not repository.try_claim_email(session, email.id, email.thread_id, email.subject):
+        return "skipped"  # claimed elsewhere, or a live attempt already in flight
+
+    try:
+        _process_one(session, email)
+        return "processed"
+    except Exception as e:  # noqa: BLE001 - intentional: isolate one bad email from the batch
+        logger.exception("Failed processing email %s", email.id)
+        repository.mark_failed(session, email.id, f"{type(e).__name__}: {e}")
+        return "failed"
+
+
 def _process_one(session, email) -> None:
     """Raises on any failure — the caller's except block is the single
     place that records mark_failed and counts it, so a failure is never
@@ -114,7 +162,22 @@ def _process_one(session, email) -> None:
     if extraction.action_type != "deadline" or extraction.deadline_date is None:
         # needs_reply / unclear, or a "deadline" the model still left dateless
         # (shouldn't happen per the prompt contract, but handled safely).
-        repository.mark_completed(session, email.id, extraction, calendar_event_id=None)
+        match = None
+        if extraction.action_type in ("needs_reply", "unclear"):
+            # A follow-up on something already tracked ("did you see my
+            # last email about scheduling?") folds into the existing
+            # action item instead of becoming a second dashboard entry —
+            # the dateless counterpart to deadline duplicate detection, see
+            # claude/post-prod/duplicate-deadline-detection.md.
+            match = repository.find_duplicate_action_item(session, extraction.event_name, email.id)
+
+        if match is not None:
+            repository.fold_action_item(session, match.email_id, email.id, extraction.source_context)
+            repository.mark_completed(
+                session, email.id, extraction, calendar_event_id=None, duplicate_of_email_id=match.email_id
+            )
+        else:
+            repository.mark_completed(session, email.id, extraction, calendar_event_id=None)
         return
 
     plausible = is_plausible(
