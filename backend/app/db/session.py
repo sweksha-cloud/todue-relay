@@ -13,7 +13,7 @@ SessionLocal: sessionmaker[Session] | None = (
 
 def get_session() -> Session:
     if SessionLocal is None:
-        raise RuntimeError("DATABASE_URL is not set — see backend/.env")
+        raise RuntimeError("DATABASE_URL is not set (locally: backend/.env; deployed: the environment or secret)")
     return SessionLocal()
 
 
