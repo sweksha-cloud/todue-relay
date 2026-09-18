@@ -126,6 +126,16 @@ FILTER_ANOMALY_MIN_SAMPLE_SIZE = int(os.getenv("FILTER_ANOMALY_MIN_SAMPLE_SIZE",
 # See claude/tradeoffs/gemini-quota-tracking.md.
 GEMINI_DAILY_QUOTA = int(os.getenv("GEMINI_DAILY_QUOTA", "20"))
 
+# Per-day call budget guard (2026-09-18, pipeline.run_pipeline): a run stops
+# claiming new emails once today's Gemini calls reach GEMINI_DAILY_QUOTA minus
+# this reserve, leaving the rest unclaimed for a later run instead of burning
+# calls into 429s. The reserve is a small cushion for calls this pipeline
+# can't see (the AI Studio playground, another script on the same project —
+# ~5 unexplained calls were seen on 2026-09-18). Untuned. Setting
+# GEMINI_DAILY_QUOTA=0 turns the guard off; raising it (e.g. for a one-off
+# manual run on a paid key) loosens it.
+GEMINI_DAILY_RESERVE = int(os.getenv("GEMINI_DAILY_RESERVE", "2"))
+
 # Surfaced on the main dashboard (2026-09-18), not just /metrics: flag
 # usage as a warning once it crosses this % of GEMINI_DAILY_QUOTA, so a
 # creeping approach to the limit is noticed before the pipeline starts

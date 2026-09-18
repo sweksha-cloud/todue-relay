@@ -21,3 +21,5 @@ from app.pipeline import run_pipeline  # noqa: E402
 if __name__ == "__main__":
     result = run_pipeline()
     print(f"Done: {result['fetched']} fetched, {result['processed']} processed, {result['failed']} failed.")
+    if result["deferred"]:
+        print(f"Daily Gemini budget spent: {result['deferred']} email(s) deferred to a later run.")
