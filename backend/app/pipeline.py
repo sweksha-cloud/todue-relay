@@ -33,7 +33,7 @@ from app.db.models import RunStatus
 from app.db.session import get_session
 from app.filters import contains_reschedule_language, is_deadline_candidate
 from app.gmail_client import fetch_messages_by_ids, fetch_recent_messages, get_gmail_service
-from app.llm_client import extract_deadline
+from app.llm_client import LLMRateLimitError, extract_deadline
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +168,11 @@ def _claim_and_process(session, email) -> str:
         return "processed"
     except Exception as e:  # noqa: BLE001 - intentional: isolate one bad email from the batch
         logger.exception("Failed processing email %s", email.id)
-        repository.mark_failed(session, email.id, f"{type(e).__name__}: {e}")
+        # A 429 isn't this email's fault — don't let it count toward the
+        # retry cap (see repository.mark_failed).
+        repository.mark_failed(
+            session, email.id, f"{type(e).__name__}: {e}", count_attempt=not isinstance(e, LLMRateLimitError)
+        )
         return "failed"
 
 
