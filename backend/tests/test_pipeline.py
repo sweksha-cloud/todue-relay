@@ -40,3 +40,18 @@ class TestClaimAndProcessSkipsCalendarInvites:
             raised = True
 
         assert raised is True
+
+
+class TestClaimAndProcessFilterOutcome:
+    def test_pre_filter_reject_returns_distinct_outcome(self):
+        """Observability layer (2026-09-18): the pre-filter reject case
+        must return its own distinct value ("filtered_out"), not the
+        generic "skipped" also used for calendar invites / claimed
+        elsewhere — run_pipeline tallies these separately so a batch of
+        invites doesn't get mistaken for a filter regression.
+        """
+        email = _email(subject="hi", body_text="just saying hello, nothing time-sensitive here")
+
+        result = _claim_and_process(session=None, email=email)
+
+        assert result == "filtered_out"
