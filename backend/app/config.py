@@ -52,10 +52,14 @@ STALE_CLAIM_MINUTES = int(os.getenv("STALE_CLAIM_MINUTES", "3"))
 # a deterministic failure re-calls Gemini every run forever. Once a FAILED
 # row's attempt_count reaches this, it is no longer reclaimed — it stays
 # FAILED (still visible on the dashboard, error message intact), just no
-# longer retried. Untuned placeholder: 5 hourly attempts rides out a
-# multi-hour Gemini/network outage without giving up early. Does not cap the
-# stale-PROCESSING (worker hard-crash) reclaim — see repository.try_claim_email.
-MAX_ATTEMPTS_PER_EMAIL = int(os.getenv("MAX_ATTEMPTS_PER_EMAIL", "5"))
+# longer retried. Lowered 5 -> 3 on 2026-09-18: the free-tier Gemini quota is
+# only 20 requests/day, so one bad email at 5 attempts costs 25% of a day's
+# allowance, at 3 it costs 15%. 3 attempts still rides out ~11h of outage at
+# GitHub's real ~3.7h schedule cadence (the cron is nominally hourly but
+# isn't). 429s don't count toward this (see llm_client.LLMRateLimitError);
+# 5xx errors do. Does not cap the stale-PROCESSING (worker hard-crash)
+# reclaim — see repository.try_claim_email.
+MAX_ATTEMPTS_PER_EMAIL = int(os.getenv("MAX_ATTEMPTS_PER_EMAIL", "3"))
 
 # Length of a timed Calendar event when the deadline has an explicit time.
 # Decided 2026-09-15: 0 — a point-in-time marker exactly at the deadline
