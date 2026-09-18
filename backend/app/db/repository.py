@@ -90,6 +90,24 @@ def try_claim_email(session: Session, email_id: str, thread_id: str, email_subje
     return claimed_id is not None
 
 
+def would_claim_email(session: Session, email_id: str) -> bool:
+    """Read-only answer to "would try_claim_email succeed right now?" — used
+    by dry-run mode (pipeline.run_pipeline(dry_run=True)), which must not
+    claim anything. A Python mirror of that function's conditional-upsert
+    WHERE clause, so the two can drift: tests/test_repository.py checks this
+    against the real try_claim_email across every row state — keep them in step.
+    """
+    row = session.get(ProcessedEmail, email_id, populate_existing=True)
+    if row is None:
+        return True  # a fresh email would insert a new claim
+    if row.status == ProcessingStatus.FAILED:
+        return row.attempt_count < MAX_ATTEMPTS_PER_EMAIL
+    if row.status == ProcessingStatus.PROCESSING:
+        stale_before = datetime.now(timezone.utc) - timedelta(minutes=STALE_CLAIM_MINUTES)
+        return row.claimed_at is not None and row.claimed_at < stale_before
+    return False  # COMPLETED / SKIPPED are terminal
+
+
 def mark_completed(
     session: Session,
     email_id: str,

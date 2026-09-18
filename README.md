@@ -83,6 +83,10 @@ pip install -r requirements.txt
 # Run the pipeline once (opens a browser for Google consent on first run)
 python -m scripts.run_pipeline
 
+# See what a run WOULD do — spends no Gemini quota and writes nothing.
+# Prefer this for checking the pipeline: the free tier is only 20 Gemini calls/day.
+python -m scripts.run_pipeline --dry-run
+
 # Run the dashboard
 uvicorn app.main:app --port 8000
 # -> http://localhost:8000

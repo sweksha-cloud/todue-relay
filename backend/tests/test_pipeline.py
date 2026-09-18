@@ -2,7 +2,7 @@ import pytest
 
 from app import pipeline
 from app.db import repository
-from app.db.models import ProcessedEmail, ProcessingStatus, RunStatus
+from app.db.models import PipelineRun, ProcessedEmail, ProcessingStatus, RunStatus
 from app.gmail_client import EmailMessage
 from app.llm_client import LLMRateLimitError
 from app.pipeline import _claim_and_process
@@ -249,3 +249,92 @@ class TestDailyBudgetGuard:
 
         assert result["processed"] == 4
         assert result["deferred"] == 0
+
+
+class TestDryRun:
+    """run_pipeline(dry_run=True): report what a real run would do, spending
+    nothing and writing nothing (claude/tradeoffs/dry-run-mode.md).
+    """
+
+    def _snapshot(self, db_session):
+        db_session.expire_all()
+        return (
+            db_session.query(PipelineRun).count(),
+            sorted((r.email_id, r.status.value, r.attempt_count) for r in db_session.query(ProcessedEmail).all()),
+        )
+
+    def test_makes_no_gemini_calls_and_writes_nothing(self, harness, db_session):
+        harness.emails = [_email(id=i) for i in ("e1", "e2", "e3")]
+        before = self._snapshot(db_session)
+
+        result = pipeline.run_pipeline(dry_run=True)
+
+        assert harness.extract_calls == []  # zero Gemini calls
+        assert self._snapshot(db_session) == before  # no claims, no run row
+        assert result["dry_run"] is True
+        assert result["would_process"] == 3
+        assert result["would_process_ids"] == ["e1", "e2", "e3"]
+        assert result["processed"] == result["failed"] == 0
+
+    def test_a_real_run_afterwards_is_unaffected(self, harness, db_session):
+        """The dry run must leave no trace that changes what a real run does."""
+        harness.emails = [_email(id=i) for i in ("e1", "e2")]
+        pipeline.run_pipeline(dry_run=True)
+
+        result = pipeline.run_pipeline()
+
+        assert result["processed"] == 2
+        assert harness.extract_calls == ["e1", "e2"]
+
+    def test_respects_the_daily_budget_using_would_be_calls(self, harness, db_session):
+        _spend(db_session, 6)  # 2 left
+        harness.emails = [_email(id=i) for i in ("e1", "e2", "e3", "e4")]
+
+        result = pipeline.run_pipeline(dry_run=True)
+
+        assert result["would_process"] == 2
+        assert result["deferred"] == 2
+
+    def test_classifies_skips_the_same_way_a_real_run_does(self, harness, db_session):
+        """Same input, same tallies for everything that costs nothing."""
+        repository.try_claim_email(db_session, "e4", "t", "s")
+        repository.mark_completed(
+            db_session, "e4",
+            ExtractionResult(
+                email_id="e4", event_name="already done", deadline_date_raw=None, deadline_date=None,
+                source_context="c", confidence="low", action_type="needs_reply",
+            ),
+            calendar_event_id=None,
+        )
+        harness.emails = [
+            _email(id="e1", subject="hi", body_text="just saying hello, nothing time-sensitive here"),  # pre-filter
+            _email(id="e2", has_calendar_invite=True),  # invite
+            _email(id="e3"),  # would be processed
+            _email(id="e4"),  # already done
+        ]
+
+        dry = pipeline.run_pipeline(dry_run=True)
+        real = pipeline.run_pipeline()
+
+        assert dry["filtered_out"] == real["filtered_out"] == 1
+        assert dry["already_terminal"] == real["already_terminal"] == 1
+        assert dry["would_process"] == real["processed"] == 1
+
+    def test_a_claim_the_real_run_would_refuse_is_reported_as_a_skip(self, harness, db_session):
+        repository.try_claim_email(db_session, "e1", "t", "s")  # live PROCESSING elsewhere
+        harness.emails = [_email(id="e1"), _email(id="e2")]
+
+        result = pipeline.run_pipeline(dry_run=True)
+
+        assert result["would_process_ids"] == ["e2"]
+
+    def test_lists_recovery_candidates_without_touching_them(self, harness, db_session):
+        repository.try_claim_email(db_session, "stuck", "t", "s")
+        repository.mark_failed(db_session, "stuck", "503")
+        before = self._snapshot(db_session)
+
+        result = pipeline.run_pipeline(dry_run=True)
+
+        assert result["recovery_candidate_ids"] == ["stuck"]
+        assert harness.recovery_fetches == [["stuck"]]  # Gmail is read...
+        assert self._snapshot(db_session) == before  # ...the row is not retried or modified
