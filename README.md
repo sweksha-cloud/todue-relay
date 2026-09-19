@@ -1,54 +1,82 @@
 # ToDue Relay
 
-Scans your Gmail for deadlines and action items (RSVPs, interview
-scheduling requests, etc.), extracts them with an LLM, and syncs
-high-confidence deadlines straight to Google Calendar. Uncertain
-extractions land in a review dashboard instead of being guessed at.
+[![Tests](https://github.com/sweksha-cloud/todue-relay/actions/workflows/tests.yml/badge.svg)](https://github.com/sweksha-cloud/todue-relay/actions/workflows/tests.yml)
 
-Full design history — every tradeoff considered and why, plus what's
-intentionally deferred — lives in `claude/` (gitignored, local-only):
-`claude/claude-code-build-prompt.md` (original spec), `claude/tradeoffs/`,
-`claude/post-prod/`, `claude/review.md`.
+Scans your Gmail for deadlines and action items (RSVPs, interview scheduling
+requests, "rent is due the 1st"), extracts them with an LLM, and syncs the
+confident ones straight to Google Calendar. Anything uncertain lands in a review
+dashboard instead of being guessed at.
+
+**Built with:** Python, FastAPI, Jinja2 + htmx, PostgreSQL (SQLAlchemy 2),
+Google Gemini, the Gmail and Calendar APIs, GitHub Actions. An AWS Lambda
+deployment is built and tested but not deployed yet (see [Deployment](#deployment)).
 
 ## How it works
 
-1. **Fetch** unread, recent Gmail messages (`app/gmail_client.py`)
-2. **Pre-filter** cheaply before any LLM call (`app/filters.py`)
-3. **Extract** structured deadline/action data via Gemini (`app/llm_client.py`)
-   — the free tier allows only **20 calls/day**, see [Gemini quota](#gemini-quota)
-4. **Route**: high-confidence deadlines auto-create a Calendar event
-   (a true recurring event if the email describes a repeating obligation,
-   e.g. "rent due the 1st of every month"); a deadline recognized as a
-   repeat or update of one already tracked skips creating a duplicate, or
-   moves the existing event if the date changed; low confidence or
-   no-fixed-date items go to a review dashboard (`app/pipeline.py`)
-5. **Track** every email's outcome in Postgres for idempotency and audit
-   (`app/db/`) — safe to re-run, never double-processes or double-creates
-6. **Review** via a small dashboard (`app/main.py` + `app/templates/`), plus a
-   `/metrics` page (run history, filter pass rate, Gemini usage vs. the daily
-   quota) and a **Check waiting mail** button that counts unprocessed emails
-   on demand — read-only, costs no Gemini quota
-7. **Protect the quota**: a per-day call budget stops claiming emails once the
-   day's allowance is spent, and a retry cap stops a failing email from being
-   retried forever (`app/pipeline.py`, `app/db/repository.py`)
+```mermaid
+flowchart LR
+    T1["GitHub Actions (hourly + manual)"] --> P["run_pipeline"]
+    T2["AWS Lambda + EventBridge (planned)"] -.-> P
+    P --> G[("Gmail (read-only)")]
+    G --> F{"Pre-filter"}
+    F -- "not a candidate" --> X["skipped, no LLM call"]
+    F -- "candidate" --> L["Gemini extraction (schema-validated)"]
+    L --> R{"Confidence routing"}
+    R -- "high confidence + plausible date" --> C["Google Calendar"]
+    R -- "low / no date / implausible" --> Q["Review queue"]
+    P <--> DB[("Postgres: claims, audit trail, OAuth token")]
+    Q --> D["Dashboard: FastAPI + htmx"]
+    DB --> D
+```
+
+1. **Fetch** unread, recent Gmail messages (`app/gmail_client.py`). A real
+   calendar invite is skipped: Gmail and Calendar already handle those natively.
+2. **Pre-filter** with a cheap scoring pass before any LLM call (`app/filters.py`).
+3. **Extract** structured data with Gemini, constrained to a schema and
+   validated on the way back (`app/llm_client.py`, `app/schemas.py`).
+4. **Route** (`app/pipeline.py`): a high-confidence deadline with a plausible date
+   creates a Calendar event, a true recurring one if the email describes a
+   repeating obligation. A repeat of something already tracked is linked rather
+   than duplicated, and a moved deadline updates the existing event in place.
+   Everything else (low confidence, an implausible date, or no fixed date such
+   as "can you schedule an interview?") goes to the review queue or the Action
+   Items list.
+5. **Track** every email's outcome in Postgres (`app/db/`) for idempotency and an
+   audit trail. It is safe to re-run: nothing is processed or created twice.
+6. **Review** on a small dashboard (`app/main.py`): approve or decline queued
+   items, correct, reschedule or remove an auto-created event, and see run
+   history, filter pass rate and Gemini usage on `/metrics`. A **Check waiting
+   mail** button counts unprocessed emails on demand, read-only and free of
+   Gemini quota.
+
+## Engineering highlights
+
+| Problem | What the code does | Where |
+|---|---|---|
+| A crash or a re-run must never double-create a Calendar event | Atomic claim per email using Postgres `INSERT ... ON CONFLICT DO UPDATE ... WHERE ... RETURNING`; a stale claim from a crashed run is reclaimed after `STALE_CLAIM_MINUTES`; a recovery sweep re-fetches stuck emails directly by id | `app/db/repository.py`, `app/pipeline.py` |
+| The LLM is slow, rate-limited and sometimes wrong | A cheap pre-filter runs first (on a real 79-email inbox, the default level passed ~39% to the LLM). Responses are validated against a schema. One bad email is isolated and recorded as failed without aborting the batch | `app/filters.py`, `app/schemas.py` |
+| An unsure model must not silently write to your calendar | Confidence routing: only high confidence with a plausible date auto-creates. An implausible date is never dropped; it is flagged and queued | `app/pipeline.py` |
+| The same deadline arrives twice, or moves | Name-similarity matching against tracked deadlines: always the same day, and across days only when the email has reschedule wording. A match with a changed date updates the existing event | `app/db/repository.py` |
+| Timezones silently shift real events | Explicit `CALENDAR_TIMEZONE` (never the runner's clock), offsets attached to event times, and regression tests for every bug found in real data (`EST/EDT`, spelled-out regions, `GMT+2` sign inversion) | `app/date_utils.py`, `tests/test_date_utils.py` |
+| The free Gemini tier allows 20 calls a day | A per-day budget (resets midnight Pacific), a retry cap where 429s don't count against an email, and a `--dry-run` that spends nothing. See [Gemini quota](#gemini-quota) | `app/pipeline.py`, `app/metrics.py` |
+| CI runners and Lambda have no persistent disk | The Google OAuth token lives in Postgres, not a local file; the local copy is only a best-effort dev mirror | `app/google_auth.py` |
+| Least privilege | Gmail access is `readonly`; Calendar access is events-only; workflows run with `contents: read` | `app/config.py`, `.github/workflows/` |
 
 ## Setup
 
-### 1. Google Cloud — Gmail + Calendar access
+### 1. Google Cloud: Gmail and Calendar access
 
-1. Create a project at [console.cloud.google.com](https://console.cloud.google.com)
-2. Enable the **Gmail API** and **Google Calendar API**
-3. Configure the OAuth consent screen (External user type; add your own
-   email as a test user — this keeps refresh tokens working past 7 days
-   only if you re-authenticate periodically; see note below)
-4. Create an OAuth Client ID, type **Desktop app**
-5. Download the JSON, save as `backend/credentials/client_secret.json`
+1. Create a project at [console.cloud.google.com](https://console.cloud.google.com).
+2. Enable the **Gmail API** and **Google Calendar API**.
+3. Configure the OAuth consent screen (External user type) and add your own
+   email as a test user.
+4. Create an OAuth Client ID of type **Desktop app**.
+5. Download the JSON and save it as `backend/credentials/client_secret.json`
+   (gitignored).
 
-**Note on OAuth "Testing" status:** while unverified, refresh tokens
-expire after 7 days, requiring you to re-approve access in a browser.
-Gmail scopes are Google-"restricted," so moving to full verified
-production status requires a security review — not worth it for personal
-use. Just expect to re-auth periodically, or script a reminder.
+While the app is unverified ("Testing" status), Google expires refresh tokens
+after 7 days and you re-approve in a browser. Gmail scopes are "restricted", so
+full verification needs a security review, which isn't worth it for personal use.
 
 ### 2. Gemini API key
 
@@ -56,25 +84,24 @@ Get one from [aistudio.google.com](https://aistudio.google.com).
 
 ### 3. Postgres
 
-Any real Postgres instance works — this project runs on [Neon](https://neon.tech)
-(free, scales to zero, auto-wakes with no manual restore step — see
-`claude/design-choices-defense/database-provider-choice.md` for why Neon
-specifically over Supabase/Render/Railway/self-hosted). A local instance
-works fine for development too:
+Any Postgres works. This project runs on [Neon](https://neon.tech) (free, scales
+to zero, wakes automatically). For local development:
 
 ```bash
-docker run -d --name deadline-tracker-pg -e POSTGRES_PASSWORD=<pw> \
-  -e POSTGRES_DB=deadlines -p 55432:5432 postgres:16-alpine
+docker run -d --name todue-relay-pg -e POSTGRES_PASSWORD=<pw> \
+  -e POSTGRES_DB=deadlines -p 5432:5432 postgres:16-alpine
 ```
 
-The OAuth token, once obtained, is stored in this database (not just a
-local file) so it survives on ephemeral compute like GitHub Actions —
-see `app/google_auth.py`.
+**Use the `postgresql+psycopg://` URL scheme**, e.g.
+`postgresql+psycopg://postgres:<pw>@localhost:5432/deadlines`. Neon and most
+providers hand out plain `postgresql://` URLs, which SQLAlchemy sends to the
+`psycopg2` driver; this project uses `psycopg` 3, so a plain URL fails with
+`No module named 'psycopg2'`.
 
-**Schema changes are manual.** There's no migration tool: the dashboard's
-startup runs `create_all`, which creates missing tables but never adds columns
-to an existing one. A database created before the observability counters were
-added needs them by hand (safe to re-run):
+**Schema changes are manual.** There is no migration tool: startup runs
+`create_all`, which creates missing tables but never adds columns to an existing
+one. A database created before the observability counters were added needs them
+by hand (safe to re-run):
 
 ```sql
 ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS emails_filtered_out INTEGER NOT NULL DEFAULT 0;
@@ -82,19 +109,21 @@ ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS emails_already_terminal INTEG
 ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS emails_deferred INTEGER NOT NULL DEFAULT 0;
 ```
 
-Run these **before** deploying code that uses a new column; the `DEFAULT 0`
-keeps older code working in the meantime.
+Run these before deploying code that uses a new column; `DEFAULT 0` keeps older
+code working in the meantime.
 
 ### 4. Configure
 
 ```bash
 cd backend
 cp .env.example .env
-# fill in GEMINI_API_KEY, DATABASE_URL, CALENDAR_TIMEZONE (your IANA zone,
-# e.g. America/Los_Angeles — required, see .env.example for why).
-# .env.example lists every setting with its default, and a test keeps it in
-# sync with app/config.py — don't leave stale values in your own .env either.
+# Fill in GEMINI_API_KEY, DATABASE_URL, and CALENDAR_TIMEZONE (an IANA zone such
+# as America/Los_Angeles; required, because the machine's own zone is wrong on
+# any runner that isn't your laptop).
 ```
+
+`.env.example` lists every setting with its default, and a test keeps it in sync
+with `app/config.py`.
 
 ### 5. Install and run
 
@@ -106,165 +135,156 @@ pip install -r requirements.txt
 # Run the pipeline once (opens a browser for Google consent on first run)
 python -m scripts.run_pipeline
 
-# See what a run WOULD do — spends no Gemini quota and writes nothing.
-# Prefer this for checking the pipeline: the free tier is only 20 Gemini calls/day.
+# Preview what a run WOULD do: spends no Gemini quota and writes nothing.
 python -m scripts.run_pipeline --dry-run
 
 # Run the dashboard
-uvicorn app.main:app --port 8000
-# -> http://localhost:8000
+uvicorn app.main:app --port 8000     # -> http://localhost:8000
 ```
 
-### Tuning the pre-filter
+Prefer `--dry-run` for checking changes; the free tier is only 20 Gemini calls a
+day.
 
-Before trusting the pre-filter against your real inbox, see how it
-performs:
+### Tuning the pre-filter
 
 ```bash
 python -m scripts.tune_filter --max-results 200
 ```
 
-Run against a real inbox (79 unread emails, 2026-09-15): `moderate`
-passed ~39% through to the LLM, `strict` ~5%, `loose` ~66%. Full
-breakdown and the reasoning for keeping `moderate`:
-`claude/tradeoffs/pre-filter-aggressiveness.md`.
+Against a real inbox (79 unread emails), the default `moderate` level passed
+~39% through to the LLM, `strict` ~5% and `loose` ~66%.
 
 ## Gemini quota
 
-The free tier of `gemini-3.6-flash` allows **20 requests/day** (and 5/minute),
-per project and model — confirmed on Google AI Studio's Rate limit page. The day
-resets at **midnight Pacific**; there is no monthly cap. A dashboard card and
-`/metrics` show today's calls against it. Real runs, retries and manual runs all
-spend the same 20, so the pipeline protects it in layers:
+The free tier of `gemini-3.6-flash` allows **20 requests a day** (and 5 a
+minute), per project and model. The day resets at **midnight Pacific**; there is
+no monthly cap. The dashboard and `/metrics` show today's calls against it. Real
+runs, retries and manual runs all spend the same 20, so the pipeline protects it
+in layers:
 
-- **Per-day call budget** — once today's calls reach `GEMINI_DAILY_QUOTA` minus
-  `GEMINI_DAILY_RESERVE`, a run stops claiming emails. Those emails are
-  **deferred**: never claimed, left untouched, and picked up by a later run after
-  the reset. The dashboard banner shows how many are waiting.
-- **Retry cap** — an email that keeps failing is retried at most
+- **Per-day call budget:** once today's calls reach `GEMINI_DAILY_QUOTA` minus
+  `GEMINI_DAILY_RESERVE`, a run stops claiming emails. They are *deferred*:
+  never claimed, left untouched, and picked up by a later run after the reset.
+- **Retry cap:** an email that keeps failing is retried at most
   `MAX_ATTEMPTS_PER_EMAIL` times, then stays visibly `failed`. Rate-limit (429)
   errors don't count toward it.
-- **Dry run** — check what a run *would* do without spending anything:
-  `python -m scripts.run_pipeline --dry-run` (or the dashboard button). It reads
-  Gmail and the database and writes nothing. Use it instead of a real run to
-  verify changes.
+- **Dry run:** shows what a run would do without spending anything
+  (`--dry-run`, or the dashboard button).
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `GEMINI_DAILY_QUOTA` | `20` | Your daily request limit (`0` turns the budget guard off) |
 | `GEMINI_DAILY_RESERVE` | `2` | Calls held back for usage the pipeline can't see |
 | `MAX_ATTEMPTS_PER_EMAIL` | `3` | Retries before a failing email is left alone |
-| `GEMINI_MIN_INTERVAL_SECONDS` | `13` | Pacing to stay under 5 requests/minute |
+| `GEMINI_MIN_INTERVAL_SECONDS` | `13` | Pacing to stay under 5 requests a minute |
 
-On a paid tier, raise `GEMINI_DAILY_QUOTA`. To force one bigger run, set it for
-that run only, e.g. `GEMINI_DAILY_QUOTA=100 python -m scripts.run_pipeline`.
+On a paid tier, raise `GEMINI_DAILY_QUOTA`. For one bigger run, set it for that
+run only: `GEMINI_DAILY_QUOTA=100 python -m scripts.run_pipeline`.
 
 ## Testing
 
 ```bash
 cd backend
 pip install -r requirements-dev.txt
+
+# A throwaway Postgres for the tests (separate from your app database):
+docker run -d --name todue-relay-pg-test -e POSTGRES_PASSWORD=test \
+  -e POSTGRES_DB=testdb -p 55432:5432 postgres:16-alpine
+
 TEST_DATABASE_URL=postgresql+psycopg://postgres:test@localhost:55432/testdb \
   python -m pytest tests/ -v
 ```
 
-150 tests: date/timezone parsing, pre-filter scoring, LLM response
-validation (including 429 handling), Calendar event construction (including
-recurrence), duplicate-deadline matching, the idempotency claim logic and retry
-cap, the daily call budget and dry-run mode (driving the real `run_pipeline`
-loop with only Gmail and Gemini stubbed), the observability metrics, and the
-dashboard pages rendered against real Postgres. The claim logic uses
-`ON CONFLICT ... RETURNING`, which has no SQLite equivalent, so a real
-Postgres instance is required — `TEST_DATABASE_URL` points at one, separate
-from the app's own `DATABASE_URL`. Runs automatically on every push via
-`.github/workflows/tests.yml` (a Postgres service container, no local
-setup needed in CI).
+172 tests across 14 files, covering date and timezone parsing, pre-filter
+scoring, LLM response validation (including 429 handling), Calendar event
+construction (including recurrence), duplicate-deadline matching, the idempotency
+claim logic and retry cap, the daily call budget and dry-run mode (driving the
+real `run_pipeline` loop with only Gmail and Gemini stubbed), the metrics, the
+dashboard pages rendered against real Postgres, the OAuth token save, and the
+Lambda handler and its packaging. The claim logic uses `ON CONFLICT ... RETURNING`,
+which has no SQLite equivalent, so the suite needs a real Postgres. It runs on
+every push via `.github/workflows/tests.yml`, with a Postgres service container.
 
 ## Deployment
 
-Runs on a schedule via GitHub Actions (`.github/workflows/pipeline.yml`)
-— every hour, plus manual trigger (`workflow_dispatch`). Needs two repo
-secrets set (`gh secret set GEMINI_API_KEY` / `DATABASE_URL`, or via the
-GitHub UI under Settings → Secrets and variables → Actions):
-
-- `GEMINI_API_KEY`
-- `DATABASE_URL`
-
-`CALENDAR_TIMEZONE`, `FILTER_LEVEL`, and `FETCH_WINDOW_DAYS` are set
-directly in the workflow file (not secrets, since they're not
-sensitive). See `claude/tradeoffs/cron-interval.md` and
-`claude/tradeoffs/fetch-window.md` for why those specific values.
-
-The job runs one at a time (a `concurrency` group queues an overlapping
-manual/scheduled run rather than running two side by side) and is capped at
-25 minutes. Note this only serializes runs *on GitHub* — a run you start from
+**Live: GitHub Actions** (`.github/workflows/pipeline.yml`) runs the pipeline on
+a schedule plus manual trigger (`workflow_dispatch`). It needs two repository
+secrets (Settings > Secrets and variables > Actions): `GEMINI_API_KEY` and
+`DATABASE_URL`. Non-sensitive settings (`CALENDAR_TIMEZONE`, `FILTER_LEVEL`,
+`FETCH_WINDOW_DAYS`) are set in the workflow file. Runs are serialized by a
+`concurrency` group (an overlapping run queues instead of running alongside) and
+capped at 25 minutes. That only serializes runs on GitHub; a run started from
 your own machine isn't covered.
 
 **Cadence:** the schedule says hourly, but GitHub treats scheduled workflows as
-best-effort — real runs were observed every 2.5-5.7 hours (about 3.7 on
-average). Correctness doesn't depend on it (processing is idempotent and the
-2-day fetch window tolerates gaps), but expect hours, not minutes, between
-runs. Running less often wouldn't save Gemini quota anyway: each email is
-processed once however often the job runs.
+best-effort, and real runs were observed every 2.5 to 5.7 hours (about 3.7 on
+average). Correctness doesn't depend on it: processing is idempotent and a 2-day
+fetch window tolerates gaps. Expect hours, not minutes, between runs. Running
+more often wouldn't spend more Gemini quota, since each email is processed once
+however often the job runs.
 
-An AWS Lambda + EventBridge deployment is a planned, deliberate second
-phase. The Lambda entry point (`backend/lambda_handler.py`) and the package
-build (`infra/aws/build_lambda.sh`) exist and are tested; nothing is
-deployed to AWS yet. See `claude/post-prod/aws-lambda-deployment.md`.
+**Built, not deployed: AWS Lambda + EventBridge.** The Lambda entry point
+(`backend/lambda_handler.py`) runs the same `run_pipeline`, reads its Gemini key
+and database URL from AWS Secrets Manager, and accepts `{"dry_run": true}` for
+quota-free checks. `infra/aws/build_lambda.sh` packages it inside AWS's own
+Lambda Python image (about 36 MB zipped, inside the 50 MB direct-upload limit).
+The handler has been run under the Lambda runtime emulator with a read-only
+filesystem. **Nothing has been deployed to AWS yet.**
 
 ## Project layout
 
 ```
 .github/workflows/
-  pipeline.yml                      # Step 8: hourly + manual-trigger run
-  tests.yml                          # CI: runs the test suite on every push
+  pipeline.yml                  # scheduled + manual pipeline run
+  tests.yml                     # CI: the test suite on every push
 infra/
   aws/
-    build_lambda.sh                  # builds the Lambda zip (Docker); not deployed yet
+    build_lambda.sh             # builds the Lambda zip (Docker); not deployed yet
 backend/
   app/
-    gmail_client.py      # Step 1: fetch
-    filters.py            # Step 1: pre-filter
-    llm_client.py          # Step 2: Gemini extraction (rate-limited)
-    schemas.py              # Step 2: structured-output contract
-    date_utils.py             # timezone-aware date parsing (see comments —
-                               #   this file has eaten more real bugs than
-                               #   anything else in the project)
-    google_auth.py             # shared Gmail+Calendar OAuth, DB-backed token
-    db/                        # Step 3: idempotency + audit trail (Postgres)
-    calendar_client.py          # Step 4: Calendar event creation/update/delete
-    pipeline.py                  # Step 5: orchestrates all of the above
-    main.py                       # Step 6/7: FastAPI + dashboard
-    view_helpers.py                # dashboard display/badge logic
-    metrics.py                     # observability: run history, usage vs. daily quota
-    templates/                     # dashboard HTML (Jinja2 + htmx)
+    pipeline.py                 # orchestrates fetch > filter > extract > route > track
+    gmail_client.py             # fetch (read-only)
+    filters.py                  # cheap pre-filter before any LLM call
+    llm_client.py               # Gemini extraction, rate-limited
+    schemas.py, prompts.py      # structured-output contract and prompt
+    calendar_client.py          # Calendar event create / update / delete
+    date_utils.py               # timezone-aware date parsing (the module with the
+                                #   most real bugs found, and the most tests)
+    google_auth.py              # shared Gmail + Calendar OAuth, DB-backed token
+    db/                         # models, sessions, idempotency + audit (Postgres)
+    metrics.py                  # run history, filter pass rate, usage vs. quota
+    main.py, view_helpers.py    # FastAPI dashboard
+    templates/                  # dashboard HTML (Jinja2 + htmx)
+    config.py                   # every setting, read from the environment
   scripts/
-    run_pipeline.py                # entry point (also what CI schedules); --dry-run to preview
-    tune_filter.py                  # pre-filter tuning against real inbox
-  lambda_handler.py                # AWS Lambda entry point (same pipeline, secrets from Secrets Manager)
-  requirements-lambda.txt          # pipeline-only deps for the Lambda package
-  tests/                             # 150 tests, see Testing section above
+    run_pipeline.py             # entry point (what CI schedules); --dry-run
+    tune_filter.py              # pre-filter tuning against a real inbox
+  lambda_handler.py             # AWS Lambda entry point
+  requirements.txt              # full app (pipeline + dashboard)
+  requirements-lambda.txt       # pipeline-only, for the Lambda package
+  requirements-dev.txt
+  tests/                        # 172 tests, run against real Postgres
 ```
 
-## Status
+## Status and limitations
 
-Steps 1-8 built, tested, and verified against a real inbox, real Gemini
-calls, real Calendar events (including true recurring events and
-duplicate-deadline handling), and real GitHub Actions runs. An automated
-test suite (150 tests) and CI run on every push. A security review pass
-is complete (dependency CVEs patched, workflow permissions restricted,
-XSS/injection risk checked directly, no secrets in git history) — one
-accepted gap: the dashboard has no authentication, fine while run
-locally, needs addressing before any public hosting.
+Built, tested, and run against a real inbox, real Gemini calls, real Calendar
+events (including recurring events and duplicate handling) and real GitHub
+Actions runs. Dependencies were audited for known CVEs and upgraded, and text
+extracted from email is HTML-escaped on the dashboard (tested with real script
+payloads).
 
-Runs within Gemini's free tier (20 requests/day) via a per-day call budget,
-a retry cap, and a read-only dry-run mode — see [Gemini quota](#gemini-quota).
+Known limitations:
 
-Correctly not built yet, per the project's own plan: Step 9 (Redis-backed
-queue, explicitly deferred until the simpler version has run for real),
-the AWS Lambda migration (deliberate second phase, not started), and
-everything in `claude/post-prod/`.
+- **The dashboard has no authentication.** It is meant to run locally; it needs
+  auth before any public hosting.
+- **Schema changes are manual** (no migration tool; see [Setup](#3-postgres)).
+- **The free Gemini tier caps throughput** at 20 extractions a day, so a large
+  backlog is worked off over several days.
+- **Actions cadence is best-effort** (see [Deployment](#deployment)).
+- **Google refresh tokens expire every 7 days** while the OAuth app is in Testing
+  status.
 
-Full decision history: `claude/review.md` (current status),
-`claude/tradeoffs/` (every decision made, with reasoning),
-`claude/fine-tuning-todo.md` (known placeholder values still open).
+Not built: deploying to AWS, Google Tasks integration for dateless items, a Gmail
+add-on, and a queue-based worker (deferred until the simple version has more
+real use).
