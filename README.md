@@ -207,9 +207,10 @@ average). Correctness doesn't depend on it (processing is idempotent and the
 runs. Running less often wouldn't save Gemini quota anyway: each email is
 processed once however often the job runs.
 
-A second workflow (AWS Lambda + EventBridge) is planned as a deliberate
-future migration once this has run for real for a while — not built
-yet. See `claude/post-prod/aws-lambda-deployment.md`.
+An AWS Lambda + EventBridge deployment is a planned, deliberate second
+phase. The Lambda entry point (`backend/lambda_handler.py`) and the package
+build (`infra/aws/build_lambda.sh`) exist and are tested; nothing is
+deployed to AWS yet. See `claude/post-prod/aws-lambda-deployment.md`.
 
 ## Project layout
 
@@ -217,6 +218,9 @@ yet. See `claude/post-prod/aws-lambda-deployment.md`.
 .github/workflows/
   pipeline.yml                      # Step 8: hourly + manual-trigger run
   tests.yml                          # CI: runs the test suite on every push
+infra/
+  aws/
+    build_lambda.sh                  # builds the Lambda zip (Docker); not deployed yet
 backend/
   app/
     gmail_client.py      # Step 1: fetch
@@ -237,6 +241,8 @@ backend/
   scripts/
     run_pipeline.py                # entry point (also what CI schedules); --dry-run to preview
     tune_filter.py                  # pre-filter tuning against real inbox
+  lambda_handler.py                # AWS Lambda entry point (same pipeline, secrets from Secrets Manager)
+  requirements-lambda.txt          # pipeline-only deps for the Lambda package
   tests/                             # 150 tests, see Testing section above
 ```
 
