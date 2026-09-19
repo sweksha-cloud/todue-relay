@@ -2,9 +2,10 @@
 
 Parseability (is this a real, resolvable date?) is objective and handled
 here. *Plausibility* (should we trust a technically-parseable but stale or
-absurdly-far-off date?) is a policy decision pending user input — see
-claude/tradeoffs/ — so `is_plausible` below takes explicit bounds rather than
-hardcoding a default, and nothing calls it yet.
+absurdly-far-off date?) is a policy decision, made 2026-09-14 (see
+claude/tradeoffs/stale-implausible-date-handling.md) — so `is_plausible`
+below takes explicit bounds rather than hardcoding them; the pipeline passes
+PLAUSIBLE_MAX_PAST_DAYS / PLAUSIBLE_MAX_FUTURE_DAYS from app/config.py.
 """
 
 from __future__ import annotations
@@ -270,9 +271,9 @@ def is_plausible(
 ) -> bool:
     """Check whether a parsed date falls within an explicit plausible window.
 
-    Bounds are required args, not defaults, because how far past/future is
-    "plausible" is a pending policy decision (see claude/tradeoffs/), not something
-    to bake in silently.
+    Bounds are required args, not defaults, so the policy lives in one place
+    (app/config.py) instead of being baked in here — see
+    claude/tradeoffs/stale-implausible-date-handling.md.
     """
     # dt may be naive or tz-aware (the LLM can surface a string with an
     # explicit timezone, e.g. "5pm EST") — match now's awareness to dt's so
