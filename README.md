@@ -8,15 +8,15 @@ confident ones straight to Google Calendar. Anything uncertain lands in a review
 dashboard instead of being guessed at.
 
 **Built with:** Python, FastAPI, Jinja2 + htmx, PostgreSQL (SQLAlchemy 2),
-Google Gemini, the Gmail and Calendar APIs, GitHub Actions. An AWS Lambda
-deployment is built and tested but not deployed yet (see [Deployment](#deployment)).
+Google Gemini, the Gmail and Calendar APIs, AWS Lambda + EventBridge Scheduler,
+GitHub Actions (CI). The scheduled job runs on AWS; see [Deployment](#deployment).
 
 ## How it works
 
 ```mermaid
 flowchart LR
-    T1["GitHub Actions (hourly + manual)"] --> P["run_pipeline"]
-    T2["AWS Lambda + EventBridge (planned)"] -.-> P
+    T1["EventBridge Scheduler (hourly) -> AWS Lambda"] --> P["run_pipeline"]
+    T2["GitHub Actions (manual / fallback)"] -.-> P
     P --> G[("Gmail (read-only)")]
     G --> F{"Pre-filter"}
     F -- "not a candidate" --> X["skipped, no LLM call"]
@@ -208,40 +208,52 @@ every push via `.github/workflows/tests.yml`, with a Postgres service container.
 
 ## Deployment
 
-**Live: GitHub Actions** (`.github/workflows/pipeline.yml`) runs the pipeline on
-a schedule plus manual trigger (`workflow_dispatch`). It needs two repository
-secrets (Settings > Secrets and variables > Actions): `GEMINI_API_KEY` and
-`DATABASE_URL`. Non-sensitive settings (`CALENDAR_TIMEZONE`, `FILTER_LEVEL`,
-`FETCH_WINDOW_DAYS`) are set in the workflow file. Runs are serialized by a
-`concurrency` group (an overlapping run queues instead of running alongside) and
-capped at 25 minutes. That only serializes runs on GitHub; the pipeline also
-refuses to start while another run is in progress (a database-level guard, see above),
-which covers a run started from your own machine and Actions overlapping Lambda.
+**Live: AWS Lambda + EventBridge Scheduler** (since 2026-09-20). An EventBridge
+Scheduler schedule (`cron(0 * * * ? *)`: every hour, on the hour, UTC) invokes the
+Lambda `todue-relay-pipeline` (Python 3.14, arm64, 1024 MB, 15-minute timeout, no VPC).
+`backend/lambda_handler.py` runs the same `run_pipeline`, reads its Gemini key and
+database URL from AWS Secrets Manager, and accepts `{"dry_run": true}` for quota-free
+checks. `infra/aws/build_lambda.sh` packages it inside AWS's own Lambda Python image
+(about 37 MB zipped, inside the 50 MB direct-upload limit). Deploying is currently a
+manual `aws lambda update-function-code`; there is no automated deploy yet.
 
-**Cadence:** the schedule says hourly, but GitHub treats scheduled workflows as
-best-effort, and real runs were observed every 2.5 to 5.7 hours (about 3.7 on
-average). Correctness doesn't depend on it: processing is idempotent and a 2-day
-fetch window tolerates gaps. Expect hours, not minutes, between runs. Running
-more often wouldn't spend more Gemini quota, since each email is processed once
-however often the job runs.
+- **Least privilege.** The function's execution role can write one log group and read
+  one secret. A separate scheduler role can only invoke the function. The policy
+  templates are in `infra/aws/iam/`, and were checked with IAM Access Analyzer.
+- **Failure containment.** No automatic retries (a retry would spend scarce Gemini
+  quota) and a queued event is dropped after 60 seconds. A CloudWatch alarm emails on
+  any error, and a second alarm fires if the function hasn't run for about 3 hours.
+- **No overlapping runs.** The pipeline refuses to start while another run is in
+  progress (the database-level guard described above), which covers a manual run during
+  a scheduled one and Actions overlapping Lambda. Lambda's own "reserved concurrency"
+  setting isn't available on a new AWS account, which is why the guard lives in the
+  application.
 
-**Built, not deployed: AWS Lambda + EventBridge.** The Lambda entry point
-(`backend/lambda_handler.py`) runs the same `run_pipeline`, reads its Gemini key
-and database URL from AWS Secrets Manager, and accepts `{"dry_run": true}` for
-quota-free checks. `infra/aws/build_lambda.sh` packages it inside AWS's own
-Lambda Python image (about 36 MB zipped, inside the 50 MB direct-upload limit).
-The handler has been run under the Lambda runtime emulator with a read-only
-filesystem. **Nothing has been deployed to AWS yet.**
+**Why it moved off GitHub Actions:** the Actions schedule said hourly, but GitHub
+treats scheduled workflows as best-effort, and real runs were observed every 2.5 to
+5.7 hours (about 3.7 on average). Correctness never depended on it (processing is
+idempotent and a 2-day fetch window tolerates gaps), but it wasn't the cadence intended.
+
+**GitHub Actions is still used** for CI (`tests.yml`, on every push and pull request)
+and for `.github/workflows/pipeline.yml`, now only a manual and fallback trigger
+(`workflow_dispatch`). It needs two repository secrets, `GEMINI_API_KEY` and
+`DATABASE_URL`, and is capped at 25 minutes with runs serialized. The old hourly cron
+is kept in that file as a comment.
+
+**The AWS deployment is time-boxed.** It runs on the AWS Free plan's credits, and the
+plan is to move the schedule back to GitHub Actions before the free plan ends in March
+2027 (disable the AWS schedule first, then restore the cron).
 
 ## Project layout
 
 ```
 .github/workflows/
-  pipeline.yml                  # scheduled + manual pipeline run
+  pipeline.yml                  # manual / fallback pipeline run (the schedule is on AWS)
   tests.yml                     # CI: the test suite on every push
 infra/
   aws/
-    build_lambda.sh             # builds the Lambda zip (Docker); not deployed yet
+    build_lambda.sh             # builds the Lambda zip (Docker); deploy is manual
+    iam/                        # IAM policy templates for the Lambda and scheduler roles
 backend/
   app/
     pipeline.py                 # orchestrates fetch > filter > extract > route > track
@@ -272,7 +284,7 @@ backend/
 
 Built, tested, and run against a real inbox, real Gemini calls, real Calendar
 events (including recurring events and duplicate handling) and real GitHub
-Actions runs. Dependencies were audited for known CVEs and upgraded, and text
+Actions and AWS Lambda runs. Dependencies were audited for known CVEs and upgraded, and text
 extracted from email is HTML-escaped on the dashboard (tested with real script
 payloads).
 
@@ -283,10 +295,11 @@ Known limitations:
 - **Schema changes are manual** (no migration tool; see [Setup](#3-postgres)).
 - **The free Gemini tier caps throughput** at 20 extractions a day, so a large
   backlog is worked off over several days.
-- **Actions cadence is best-effort** (see [Deployment](#deployment)).
+- **Lambda deploys are manual** (no automated CD yet), and the AWS hosting is
+  time-boxed to the free plan (see [Deployment](#deployment)).
 - **Google refresh tokens expire every 7 days** while the OAuth app is in Testing
   status.
 
-Not built: deploying to AWS, Google Tasks integration for dateless items, a Gmail
+Not built: automated deploys to AWS, Google Tasks integration for dateless items, a Gmail
 add-on, and a queue-based worker (deferred until the simple version has more
 real use).
