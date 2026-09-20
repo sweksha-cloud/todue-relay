@@ -222,7 +222,9 @@ def reschedule_email(
 @app.post("/emails/{email_id}/remove", response_class=HTMLResponse)
 def remove_email(request: Request, email_id: str, db: Session = Depends(get_db)):
     """The "wrong, just get rid of it" path — deletes the real Calendar
-    event, not just the local record of it.
+    event, not just the local record of it. The row is kept in the database
+    (recorded as an "incorrect" vote, and so it is never re-added) but no longer
+    listed, so the response is empty: htmx swaps the row out of the table.
     """
     row = db.get(ProcessedEmail, email_id)
     if row is None:
@@ -232,8 +234,8 @@ def remove_email(request: Request, email_id: str, db: Session = Depends(get_db))
 
     service = calendar_client.get_calendar_service()
     calendar_client.delete_event(service, row.calendar_event_id)
-    row = repository.remove_calendar_event(db, email_id)
-    return templates.TemplateResponse(request, "_row.html", {"email": row})
+    repository.remove_calendar_event(db, email_id)
+    return HTMLResponse(content="")
 
 
 @app.post("/emails/{email_id}/approve", response_class=HTMLResponse)

@@ -2,11 +2,14 @@
 Postgres. Only the DB dependency is swapped; the app and templates are real.
 """
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.db import repository
-from app.db.models import RunStatus
+from app.db.models import ProcessedEmail, ProcessingStatus, RunStatus
+from app.schemas import ExtractionResult
 from app import main, pipeline
 from app.db.session import get_db
 from app.main import app
@@ -132,3 +135,96 @@ class TestCheckWaitingMail:
     def test_get_is_not_allowed(self, client):
         """POST-only, so a crawler or link prefetch can't trigger a Gmail read."""
         assert client.get("/waiting").status_code == 405
+
+
+# --- Removed items ---------------------------------------------------------------------
+def _completed_row(db_session, email_id="e1", subject="Nominations due", event_id="cal-1", action_type="deadline"):
+    """A finished extraction, with a live Calendar event unless event_id is None."""
+    deadline = datetime.now(timezone.utc) + timedelta(days=3)
+    repository.try_claim_email(db_session, email_id, f"t-{email_id}", subject)
+    repository.mark_completed(
+        db_session, email_id,
+        ExtractionResult(
+            email_id=email_id, event_name=subject, deadline_date_raw="in 3 days",
+            deadline_date=deadline if action_type == "deadline" else None,
+            source_context="ctx", confidence="high", action_type=action_type,
+        ),
+        calendar_event_id=event_id,
+    )
+    return db_session.get(ProcessedEmail, email_id)
+
+
+@pytest.fixture
+def calendar_calls(monkeypatch):
+    """Stub the Calendar API: record what the dashboard asks it to do."""
+    calls = {"deleted": [], "created": []}
+    monkeypatch.setattr(main.calendar_client, "get_calendar_service", lambda: object())
+    monkeypatch.setattr(main.calendar_client, "delete_event", lambda service, event_id: calls["deleted"].append(event_id))
+    return calls
+
+
+class TestRemovedItemsAreHidden:
+    def test_remove_deletes_the_event_and_returns_an_empty_body_so_the_row_disappears(
+        self, client, db_session, calendar_calls
+    ):
+        _completed_row(db_session)
+
+        response = client.post("/emails/e1/remove")
+
+        assert response.status_code == 200
+        assert response.text == ""  # htmx swaps the row out of the table
+        assert calendar_calls["deleted"] == ["cal-1"]
+
+    def test_a_removed_item_no_longer_appears_on_the_dashboard(self, client, db_session, calendar_calls):
+        _completed_row(db_session, "e1", subject="Nominations due")
+        _completed_row(db_session, "e2", subject="Rent reminder", event_id="cal-2")
+        assert "Nominations due" in client.get("/").text
+
+        client.post("/emails/e1/remove")
+        page = client.get("/").text
+
+        assert "Nominations due" not in page
+        assert "Rent reminder" in page  # other rows are untouched
+        assert [r.email_id for r in repository.list_recent_emails(db_session)] == ["e2"]
+        assert repository.count_recent_emails(db_session) == 1
+
+    def test_the_removed_row_stays_in_the_database_so_the_email_is_never_re_added(
+        self, client, db_session, calendar_calls
+    ):
+        _completed_row(db_session)
+
+        client.post("/emails/e1/remove")
+
+        row = db_session.get(ProcessedEmail, "e1")
+        assert row is not None
+        assert row.status == ProcessingStatus.SKIPPED
+        assert row.calendar_event_id is None
+        assert "e1" in repository.get_terminal_email_ids(db_session, ["e1"])  # the pipeline won't reprocess it
+
+    def test_a_removal_still_counts_as_an_incorrect_vote(self, client, db_session, calendar_calls):
+        _completed_row(db_session, "e1")
+        _completed_row(db_session, "e2", event_id="cal-2", subject="Kept")
+        repository.set_correction(db_session, "e2", True)
+
+        client.post("/emails/e1/remove")
+
+        assert repository.get_correction_rate(db_session) == 0.5  # 1 correct, 1 incorrect (the removal)
+
+    def test_rows_with_no_error_message_or_other_errors_are_still_listed(self, db_session):
+        _completed_row(db_session, "e1", subject="Plain row", event_id=None)
+        repository.try_claim_email(db_session, "e2", "t2", "Failed row")
+        repository.mark_failed(db_session, "e2", "ValueError: something else broke")
+
+        listed = {r.email_id for r in repository.list_recent_emails(db_session)}
+
+        assert listed == {"e1", "e2"}  # only the "removed by user" marker hides a row
+
+    def test_a_removed_action_item_is_hidden_from_the_action_items_list_too(self, db_session):
+        row = _completed_row(db_session, "a1", subject="Reply to advisor", event_id=None, action_type="needs_reply")
+        assert [r.email_id for r in repository.list_action_items(db_session)] == ["a1"]
+
+        row.error_message = repository.REMOVED_BY_USER_MESSAGE
+        db_session.commit()
+
+        assert repository.list_action_items(db_session) == []
+        assert repository.count_action_items(db_session) == 0

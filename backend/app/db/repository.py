@@ -336,14 +336,24 @@ def get_terminal_email_ids(session: Session, email_ids: list[str]) -> set[str]:
     return set(session.execute(stmt).scalars().all())
 
 
+def _not_removed():
+    """Rows the user did not remove with the dashboard's Remove button. Removed rows are
+    kept in the table on purpose (the pipeline treats SKIPPED as done, so the email is never
+    re-added, and the "incorrect" vote still counts toward the correction rate); they are just
+    not listed. NULL-safe: most rows have no error_message at all.
+    """
+    return ProcessedEmail.error_message.is_(None) | (ProcessedEmail.error_message != REMOVED_BY_USER_MESSAGE)
+
+
 def _recent_emails_filter():
     # DEADLINE (or not-yet-classified) rows only — needs_reply/unclear show
     # up in the action items list instead (see list_action_items), not
     # duplicated here. Shared between the page query and its count so they
     # can never drift out of sync with each other.
-    return ProcessedEmail.extraction_action_type.is_(None) | (
-        ProcessedEmail.extraction_action_type == ActionType.DEADLINE
-    )
+    return (
+        ProcessedEmail.extraction_action_type.is_(None)
+        | (ProcessedEmail.extraction_action_type == ActionType.DEADLINE)
+    ) & _not_removed()
 
 
 def list_recent_emails(session: Session, limit: int = 25, offset: int = 0) -> list[ProcessedEmail]:
@@ -417,6 +427,12 @@ def reschedule_email(
     return row
 
 
+# error_message written by remove_calendar_event. It doubles as the marker that hides a
+# removed item from the dashboard lists (see _not_removed): no schema change needed, and
+# rows removed before this filter existed already carry the same text.
+REMOVED_BY_USER_MESSAGE = "removed from calendar by user (marked incorrect)"
+
+
 def remove_calendar_event(session: Session, email_id: str) -> ProcessedEmail:
     """The "remove from calendar" side of marking an auto-created event
     wrong: the Calendar event itself is deleted by the caller
@@ -433,7 +449,7 @@ def remove_calendar_event(session: Session, email_id: str) -> ProcessedEmail:
     row.status = ProcessingStatus.SKIPPED
     row.calendar_event_id = None
     row.user_correction = False
-    row.error_message = "removed from calendar by user (marked incorrect)"
+    row.error_message = REMOVED_BY_USER_MESSAGE
     row.completed_at = datetime.now(timezone.utc)
     session.commit()
     session.refresh(row)
@@ -538,8 +554,10 @@ def _action_items_filter():
     # duplicate_of_email_id is set on a follow-up that got folded into an
     # earlier action item (find_duplicate_action_item/fold_action_item) —
     # excluded here so the fold doesn't still show up as a second entry.
-    return ProcessedEmail.extraction_action_type.in_([ActionType.NEEDS_REPLY, ActionType.UNCLEAR]) & (
-        ProcessedEmail.duplicate_of_email_id.is_(None)
+    return (
+        ProcessedEmail.extraction_action_type.in_([ActionType.NEEDS_REPLY, ActionType.UNCLEAR])
+        & ProcessedEmail.duplicate_of_email_id.is_(None)
+        & _not_removed()
     )
 
 
