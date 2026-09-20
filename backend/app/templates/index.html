@@ -108,6 +108,10 @@
           <span class="badge {{ action_type_badge_class(item.extraction_action_type.value) }}">{{ action_type_label(item.extraction_action_type.value) }}</span>
           <strong>{{ item.email_subject }}</strong>
           {% if item.extraction_source_context %}<br><span class="verdict">{{ item.extraction_source_context }}</span>{% endif %}
+          <form hx-post="/emails/{{ item.email_id }}/schedule" hx-swap="none" style="display:inline-flex; gap:4px; align-items:center; margin-top:6px;">
+            <input type="datetime-local" name="new_datetime" required style="font-size:0.75rem; padding:2px;">
+            <button class="vote" type="submit" title="Create a Calendar event at this date and time">📅 Schedule</button>
+          </form>
         </li>
       {% endfor %}
     </ul>

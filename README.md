@@ -44,7 +44,8 @@ flowchart LR
 5. **Track** every email's outcome in Postgres (`app/db/`) for idempotency and an
    audit trail. It is safe to re-run: nothing is processed or created twice.
 6. **Review** on a small dashboard (`app/main.py`): approve or decline queued
-   items, correct, reschedule or remove an auto-created event, and see run
+   items, schedule an action item onto the calendar, correct, reschedule or remove
+   an auto-created event (a removed item leaves the list), and see run
    history, filter pass rate and Gemini usage on `/metrics`. A **Check waiting
    mail** button counts unprocessed emails on demand, read-only and free of
    Gemini quota.
@@ -196,7 +197,7 @@ TEST_DATABASE_URL=postgresql+psycopg://postgres:test@localhost:55432/testdb \
   python -m pytest tests/ -v
 ```
 
-183 tests across 15 files, covering date and timezone parsing, pre-filter
+196 tests across 15 files, covering date and timezone parsing, pre-filter
 scoring, LLM response validation (including 429 handling), Calendar event
 construction (including recurrence), duplicate-deadline matching, the idempotency
 claim logic and retry cap, the daily call budget and dry-run mode (driving the
@@ -277,7 +278,7 @@ backend/
   requirements.txt              # full app (pipeline + dashboard)
   requirements-lambda.txt       # pipeline-only, for the Lambda package
   requirements-dev.txt
-  tests/                        # 183 tests, run against real Postgres
+  tests/                        # 196 tests, run against real Postgres
 ```
 
 ## Status and limitations

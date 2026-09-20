@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app import calendar_client, metrics, pipeline
 from app.date_utils import detect_local_timezone, to_local
 from app.db import repository
-from app.db.models import Base, ProcessedEmail, ProcessingStatus
+from app.db.models import ActionType, Base, ProcessedEmail, ProcessingStatus
 from app.db.session import engine, get_db
 from app.view_helpers import (
     ACTION_TYPE_BADGE_CLASS,
@@ -217,6 +217,42 @@ def reschedule_email(
     )
     row = repository.reschedule_email(db, email_id, new_deadline, has_time=True)
     return templates.TemplateResponse(request, "_row.html", {"email": row})
+
+
+@app.post("/emails/{email_id}/schedule", response_class=HTMLResponse)
+def schedule_action_item(
+    email_id: str,
+    new_datetime: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Action items have no date, so no Calendar event. This lets the user pick one: it
+    creates the event and moves the item out of the action-items list into the regular
+    list, where it behaves like any scheduled deadline (Reschedule / Remove). The response
+    is empty with HX-Refresh so the page reloads and the item appears in its new place.
+    """
+    row = db.get(ProcessedEmail, email_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="No such email")
+    is_action_item = row.extraction_action_type in (ActionType.NEEDS_REPLY, ActionType.UNCLEAR)
+    if not is_action_item or row.status != ProcessingStatus.COMPLETED or row.calendar_event_id:
+        raise HTTPException(status_code=400, detail="Not an unscheduled action item")
+
+    try:
+        naive = datetime.fromisoformat(new_datetime)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date/time")
+    deadline = naive.replace(tzinfo=ZoneInfo(detect_local_timezone()))
+
+    service = calendar_client.get_calendar_service()
+    event_id = calendar_client.create_event(
+        service,
+        summary=row.extraction_event_name or row.email_subject,
+        description=row.extraction_source_context or "",
+        deadline=deadline,
+        has_time=True,
+    )
+    repository.schedule_action_item(db, email_id, deadline, event_id)
+    return HTMLResponse(content="", headers={"HX-Refresh": "true"})
 
 
 @app.post("/emails/{email_id}/remove", response_class=HTMLResponse)

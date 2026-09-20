@@ -350,9 +350,12 @@ def _recent_emails_filter():
     # up in the action items list instead (see list_action_items), not
     # duplicated here. Shared between the page query and its count so they
     # can never drift out of sync with each other.
+    # An action item the user scheduled has a live Calendar event now, so it belongs here
+    # (with the Reschedule/Remove controls) instead of in the action-items list.
     return (
         ProcessedEmail.extraction_action_type.is_(None)
         | (ProcessedEmail.extraction_action_type == ActionType.DEADLINE)
+        | ProcessedEmail.calendar_event_id.is_not(None)
     ) & _not_removed()
 
 
@@ -395,6 +398,29 @@ def set_correction(session: Session, email_id: str, is_correct: bool) -> Process
         raise ValueError(f"No such email {email_id}")
 
     row.user_correction = is_correct
+    session.commit()
+    session.refresh(row)
+    return row
+
+
+def schedule_action_item(
+    session: Session, email_id: str, deadline: datetime, calendar_event_id: str, *, has_time: bool = True
+) -> ProcessedEmail:
+    """The user picked a date for a dateless action item (needs_reply / unclear): the caller
+    has created the Calendar event; this records the date and the event on the row.
+
+    extraction_action_type and completed_at are deliberately left alone, so past run
+    history (which groups rows by when they completed and classifies them by action type)
+    is not rewritten. The row now has a live event, so the dashboard lists it with the
+    other scheduled items and offers Reschedule / Remove like any of them.
+    """
+    row = session.get(ProcessedEmail, email_id)
+    if row is None:
+        raise ValueError(f"No such email {email_id}")
+
+    row.extraction_deadline_parsed = deadline
+    row.extraction_has_time = has_time
+    row.calendar_event_id = calendar_event_id
     session.commit()
     session.refresh(row)
     return row
@@ -557,6 +583,7 @@ def _action_items_filter():
     return (
         ProcessedEmail.extraction_action_type.in_([ActionType.NEEDS_REPLY, ActionType.UNCLEAR])
         & ProcessedEmail.duplicate_of_email_id.is_(None)
+        & ProcessedEmail.calendar_event_id.is_(None)  # once scheduled it is no longer "no fixed date"
         & _not_removed()
     )
 

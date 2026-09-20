@@ -3,6 +3,7 @@ Postgres. Only the DB dependency is swapped; the app and templates are real.
 """
 
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,7 +11,7 @@ from fastapi.testclient import TestClient
 from app.db import repository
 from app.db.models import ProcessedEmail, ProcessingStatus, RunStatus
 from app.schemas import ExtractionResult
-from app import main, pipeline
+from app import main, metrics, pipeline
 from app.db.session import get_db
 from app.main import app
 
@@ -228,3 +229,109 @@ class TestRemovedItemsAreHidden:
 
         assert repository.list_action_items(db_session) == []
         assert repository.count_action_items(db_session) == 0
+
+
+# --- Scheduling an action item ---------------------------------------------------------
+@pytest.fixture
+def create_calls(monkeypatch):
+    """Stub Calendar creation (and deletion), recording what the dashboard asks for."""
+    calls = {"created": [], "deleted": []}
+
+    def fake_create(service, **kwargs):
+        calls["created"].append(kwargs)
+        return f"cal-new-{len(calls['created'])}"
+
+    monkeypatch.setattr(main.calendar_client, "get_calendar_service", lambda: object())
+    monkeypatch.setattr(main.calendar_client, "create_event", fake_create)
+    monkeypatch.setattr(main.calendar_client, "delete_event", lambda service, event_id: calls["deleted"].append(event_id))
+    monkeypatch.setattr(main, "detect_local_timezone", lambda: "America/Los_Angeles")
+    return calls
+
+
+def _action_item(db_session, email_id="a1", subject="Reply to advisor about thesis"):
+    return _completed_row(db_session, email_id, subject=subject, event_id=None, action_type="needs_reply")
+
+
+class TestScheduleActionItem:
+    def test_creates_a_calendar_event_at_the_chosen_time_and_records_it(self, client, db_session, create_calls):
+        _action_item(db_session)
+
+        response = client.post("/emails/a1/schedule", data={"new_datetime": "2026-10-05T14:30"})
+
+        assert response.status_code == 200
+        assert response.text == ""
+        assert response.headers["HX-Refresh"] == "true"  # the page reloads so the item moves lists
+        expected = datetime(2026, 10, 5, 14, 30, tzinfo=ZoneInfo("America/Los_Angeles"))
+        assert create_calls["created"] == [
+            dict(summary="Reply to advisor about thesis", description="ctx", deadline=expected, has_time=True)
+        ]
+        row = db_session.get(ProcessedEmail, "a1")
+        assert row.calendar_event_id == "cal-new-1"
+        assert row.extraction_deadline_parsed == expected
+        assert row.extraction_has_time is True
+
+    def test_the_item_moves_from_action_items_to_the_regular_list_with_reschedule_controls(
+        self, client, db_session, create_calls
+    ):
+        _action_item(db_session)
+        before = client.get("/").text
+        assert "/emails/a1/schedule" in before  # the Schedule control is offered
+
+        client.post("/emails/a1/schedule", data={"new_datetime": "2026-10-05T14:30"})
+
+        assert repository.list_action_items(db_session) == []
+        assert repository.count_action_items(db_session) == 0
+        assert [r.email_id for r in repository.list_recent_emails(db_session)] == ["a1"]
+        after = client.get("/").text
+        assert "/emails/a1/schedule" not in after  # no longer an unscheduled action item
+        assert "/emails/a1/reschedule" in after  # it now has the usual scheduled-item controls
+        assert "/emails/a1/remove" in after
+
+    def test_past_run_history_is_not_rewritten(self, client, db_session, create_calls):
+        row = _action_item(db_session)
+        client.post("/emails/a1/schedule", data={"new_datetime": "2026-10-05T14:30"})
+
+        counts = metrics._outcome_counts([db_session.get(ProcessedEmail, "a1")])
+
+        assert counts["action_items_surfaced"] == 1  # still what it was when its run surfaced it
+        assert counts["deadlines_auto_created"] == 0
+
+    def test_a_scheduled_item_can_then_be_removed_and_disappears_from_both_lists(
+        self, client, db_session, create_calls
+    ):
+        _action_item(db_session)
+        client.post("/emails/a1/schedule", data={"new_datetime": "2026-10-05T14:30"})
+
+        removed = client.post("/emails/a1/remove")
+
+        assert removed.status_code == 200 and removed.text == ""
+        assert create_calls["deleted"] == ["cal-new-1"]
+        assert repository.list_action_items(db_session) == []
+        assert repository.list_recent_emails(db_session) == []
+
+    def test_scheduling_twice_does_not_create_a_second_event(self, client, db_session, create_calls):
+        _action_item(db_session)
+        client.post("/emails/a1/schedule", data={"new_datetime": "2026-10-05T14:30"})
+
+        again = client.post("/emails/a1/schedule", data={"new_datetime": "2026-10-06T09:00"})
+
+        assert again.status_code == 400
+        assert len(create_calls["created"]) == 1
+
+    def test_only_unscheduled_action_items_can_be_scheduled(self, client, db_session, create_calls):
+        _completed_row(db_session, "d1", subject="Rent due", event_id="cal-9")  # a normal deadline with an event
+
+        response = client.post("/emails/d1/schedule", data={"new_datetime": "2026-10-05T14:30"})
+
+        assert response.status_code == 400
+        assert create_calls["created"] == []
+
+    def test_unknown_email_and_bad_datetime_are_rejected_without_touching_the_calendar(
+        self, client, db_session, create_calls
+    ):
+        _action_item(db_session)
+
+        assert client.post("/emails/nope/schedule", data={"new_datetime": "2026-10-05T14:30"}).status_code == 404
+        assert client.post("/emails/a1/schedule", data={"new_datetime": "not-a-date"}).status_code == 400
+        assert create_calls["created"] == []
+        assert db_session.get(ProcessedEmail, "a1").calendar_event_id is None
