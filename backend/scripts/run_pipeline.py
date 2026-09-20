@@ -40,6 +40,8 @@ if __name__ == "__main__":
     result = run_pipeline(dry_run=args.dry_run)
     if args.dry_run:
         _print_dry_run_report(result)
+    elif result.get("skipped_run"):
+        print("Skipped: another pipeline run is in progress. Nothing was changed.")
     else:
         print(f"Done: {result['fetched']} fetched, {result['processed']} processed, {result['failed']} failed.")
         if result["deferred"]:

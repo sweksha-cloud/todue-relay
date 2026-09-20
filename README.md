@@ -54,6 +54,7 @@ flowchart LR
 | Problem | What the code does | Where |
 |---|---|---|
 | A crash or a re-run must never double-create a Calendar event | Atomic claim per email using Postgres `INSERT ... ON CONFLICT DO UPDATE ... WHERE ... RETURNING`; a stale claim from a crashed run is reclaimed after `STALE_CLAIM_MINUTES`; a recovery sweep re-fetches stuck emails directly by id | `app/db/repository.py`, `app/pipeline.py` |
+| Two runs at once (a manual run during a scheduled one, or Actions and Lambda together) would double-spend the daily Gemini budget | A single-flight guard: a Postgres advisory *transaction* lock serializes the check-and-insert of a `RUNNING` row, so a real run exits immediately if another started within `RUN_LOCK_TTL_MINUTES` and hasn't finished. The expiry doubles as a lease for crashed runs, and the lock is transaction-scoped, so it works through a pooled connection. Covered by a multi-connection race test | `app/db/repository.py`, `app/pipeline.py`, `tests/test_run_guard.py` |
 | The LLM is slow, rate-limited and sometimes wrong | A cheap pre-filter runs first (on a real 79-email inbox, the default level passed ~39% to the LLM). Responses are validated against a schema. One bad email is isolated and recorded as failed without aborting the batch | `app/filters.py`, `app/schemas.py` |
 | An unsure model must not silently write to your calendar | Confidence routing: only high confidence with a plausible date auto-creates. An implausible date is never dropped; it is flagged and queued | `app/pipeline.py` |
 | The same deadline arrives twice, or moves | Name-similarity matching against tracked deadlines: always the same day, and across days only when the email has reschedule wording. A match with a changed date updates the existing event | `app/db/repository.py` |
@@ -195,7 +196,7 @@ TEST_DATABASE_URL=postgresql+psycopg://postgres:test@localhost:55432/testdb \
   python -m pytest tests/ -v
 ```
 
-172 tests across 14 files, covering date and timezone parsing, pre-filter
+183 tests across 15 files, covering date and timezone parsing, pre-filter
 scoring, LLM response validation (including 429 handling), Calendar event
 construction (including recurrence), duplicate-deadline matching, the idempotency
 claim logic and retry cap, the daily call budget and dry-run mode (driving the
@@ -213,8 +214,9 @@ secrets (Settings > Secrets and variables > Actions): `GEMINI_API_KEY` and
 `DATABASE_URL`. Non-sensitive settings (`CALENDAR_TIMEZONE`, `FILTER_LEVEL`,
 `FETCH_WINDOW_DAYS`) are set in the workflow file. Runs are serialized by a
 `concurrency` group (an overlapping run queues instead of running alongside) and
-capped at 25 minutes. That only serializes runs on GitHub; a run started from
-your own machine isn't covered.
+capped at 25 minutes. That only serializes runs on GitHub; the pipeline also
+refuses to start while another run is in progress (a database-level guard, see above),
+which covers a run started from your own machine and Actions overlapping Lambda.
 
 **Cadence:** the schedule says hourly, but GitHub treats scheduled workflows as
 best-effort, and real runs were observed every 2.5 to 5.7 hours (about 3.7 on
@@ -263,7 +265,7 @@ backend/
   requirements.txt              # full app (pipeline + dashboard)
   requirements-lambda.txt       # pipeline-only, for the Lambda package
   requirements-dev.txt
-  tests/                        # 172 tests, run against real Postgres
+  tests/                        # 183 tests, run against real Postgres
 ```
 
 ## Status and limitations

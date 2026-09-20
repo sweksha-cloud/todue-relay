@@ -29,6 +29,7 @@ from app.config import (
     MAX_EMAILS_PER_RUN,
     PLAUSIBLE_MAX_FUTURE_DAYS,
     PLAUSIBLE_MAX_PAST_DAYS,
+    RUN_LOCK_TTL_MINUTES,
 )
 from app.date_utils import has_explicit_time, is_plausible
 from app.db import repository
@@ -52,6 +53,10 @@ def run_pipeline(*, dry_run: bool = False) -> dict:
     unread and inside FETCH_WINDOW_DAYS. Applies to every caller, manual runs
     included. Deferral is logged and returned but not persisted anywhere.
 
+    Single-flight (repository.try_start_run): a real run exits immediately, returning
+    "skipped_run": True and touching nothing, if another run is already in progress.
+    Dry runs bypass this: they write nothing and spend nothing, so they can overlap.
+
     dry_run (claude/tradeoffs/dry-run-mode.md): report what a real run WOULD
     do — which emails it would send to Gemini, defer, skip, or recover —
     without spending quota or changing anything. Gmail and the database are
@@ -61,7 +66,19 @@ def run_pipeline(*, dry_run: bool = False) -> dict:
     cache, if the token happens to need refreshing — same as any read.
     """
     session = get_session()
-    run = None if dry_run else repository.start_run(session)
+    if dry_run:
+        run = None
+    else:
+        run = repository.try_start_run(session, ttl_minutes=RUN_LOCK_TTL_MINUTES)
+        if run is None:
+            # Single-flight: another run is in progress (see try_start_run). Exit
+            # quietly and successfully; the next scheduled run picks up anything left.
+            session.close()
+            logger.warning(
+                "Another pipeline run is in progress (started within the last %d min); skipping this one",
+                RUN_LOCK_TTL_MINUTES,
+            )
+            return _empty_summary(skipped_run=True)
     fetched = processed = failed = filtered_out = already_terminal = deferred = would_process = 0
     would_process_ids: list[str] = []
     stuck_ids: list[str] = []
@@ -175,6 +192,23 @@ def run_pipeline(*, dry_run: bool = False) -> dict:
         "would_process": would_process,
         "would_process_ids": would_process_ids,
         "recovery_candidate_ids": stuck_ids,
+        "skipped_run": False,
+    }
+
+
+def _empty_summary(*, skipped_run: bool) -> dict:
+    return {
+        "fetched": 0,
+        "processed": 0,
+        "failed": 0,
+        "filtered_out": 0,
+        "already_terminal": 0,
+        "deferred": 0,
+        "dry_run": False,
+        "would_process": 0,
+        "would_process_ids": [],
+        "recovery_candidate_ids": [],
+        "skipped_run": skipped_run,
     }
 
 

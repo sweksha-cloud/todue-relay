@@ -1,4 +1,5 @@
 import pytest
+from sqlalchemy import func, select
 
 from app import pipeline
 from app.db import repository
@@ -350,3 +351,50 @@ class TestDryRun:
         assert result["recovery_candidate_ids"] == ["stuck"]
         assert harness.recovery_fetches == [["stuck"]]  # Gmail is read...
         assert self._snapshot(db_session) == before  # ...the row is not retried or modified
+
+
+# --- Single-flight guard -------------------------------------------------------
+# A real run exits immediately if another run is in progress; a dry run never
+# does. Drives the real run_pipeline() against real Postgres (see the harness above).
+class TestSingleFlight:
+    def _run_count(self, db_session) -> int:
+        db_session.rollback()
+        return db_session.execute(select(func.count()).select_from(PipelineRun)).scalar_one()
+
+    def test_a_run_in_progress_makes_the_next_real_run_skip_without_touching_anything(self, db_session, harness):
+        harness.emails = [_email(id="e1")]
+        assert repository.try_start_run(db_session, ttl_minutes=30) is not None  # another live run
+
+        result = pipeline.run_pipeline()
+
+        assert result["skipped_run"] is True
+        assert result["fetched"] == 0 and result["processed"] == 0
+        assert harness.extract_calls == []  # never reached Gemini
+        assert self._run_count(db_session) == 1  # and wrote no second run row
+
+    def test_a_dry_run_ignores_the_guard(self, db_session, harness):
+        assert repository.try_start_run(db_session, ttl_minutes=30) is not None
+
+        result = pipeline.run_pipeline(dry_run=True)
+
+        assert result["skipped_run"] is False
+        assert result["dry_run"] is True
+
+    def test_a_normal_run_reports_it_was_not_skipped_and_releases_the_guard(self, db_session, harness):
+        first = pipeline.run_pipeline()
+        second = pipeline.run_pipeline()
+
+        assert first["skipped_run"] is False
+        assert second["skipped_run"] is False  # the first finished, so it no longer blocks
+        assert self._run_count(db_session) == 2
+
+    def test_a_run_that_errors_out_still_releases_the_guard(self, db_session, harness, monkeypatch):
+        def gmail_down():
+            raise RuntimeError("gmail down")
+
+        monkeypatch.setattr(pipeline, "get_gmail_service", gmail_down)
+        with pytest.raises(RuntimeError):
+            pipeline.run_pipeline()
+
+        monkeypatch.setattr(pipeline, "get_gmail_service", lambda: object())
+        assert pipeline.run_pipeline()["skipped_run"] is False

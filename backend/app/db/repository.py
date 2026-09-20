@@ -14,7 +14,7 @@ import difflib
 import re
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import BigInteger, func, literal, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -444,6 +444,43 @@ def start_run(session: Session) -> PipelineRun:
     run = PipelineRun(status=RunStatus.RUNNING)
     session.add(run)
     session.commit()
+    session.refresh(run)
+    return run
+
+
+# Arbitrary constant naming "starting a pipeline run" to Postgres's advisory locks.
+RUN_LOCK_KEY = 7_215_930_001
+
+
+def try_start_run(session: Session, *, ttl_minutes: int) -> PipelineRun | None:
+    """Single-flight start: create a RUNNING PipelineRun, unless another run is
+    already in progress, in which case return None and change nothing.
+
+    "In progress" means a RUNNING row that started within `ttl_minutes`; an older
+    RUNNING row is a crashed run's leftover and is ignored (a lease that expires).
+
+    The check and the insert must be one atomic step: two runs that both see "no
+    run in progress" and both insert would defeat the guard. pg_advisory_xact_lock
+    serializes exactly that critical section, and, being transaction-scoped, it is
+    released on commit/rollback, so it is safe through a transaction-mode pooler
+    such as Neon's (a session-level lock would not be). The lock is held only for
+    the check-and-insert; "a run is in progress" itself is the RUNNING row.
+    """
+    session.execute(select(func.pg_advisory_xact_lock(literal(RUN_LOCK_KEY, BigInteger))))
+    in_progress = session.execute(
+        select(PipelineRun.id)
+        .where(
+            PipelineRun.status == RunStatus.RUNNING,
+            PipelineRun.started_at > func.now() - timedelta(minutes=ttl_minutes),
+        )
+        .limit(1)
+    ).first()
+    if in_progress is not None:
+        session.rollback()  # releases the advisory lock
+        return None
+    run = PipelineRun(status=RunStatus.RUNNING)
+    session.add(run)
+    session.commit()  # releases the lock; the RUNNING row is now visible to everyone
     session.refresh(run)
     return run
 

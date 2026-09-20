@@ -47,6 +47,15 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 # See claude/tradeoffs/stale-claim-minutes.md.
 STALE_CLAIM_MINUTES = int(os.getenv("STALE_CLAIM_MINUTES", "3"))
 
+# Single-flight guard (repository.try_start_run, called by pipeline.run_pipeline):
+# a non-dry run exits immediately if another run's RUNNING row started within
+# this many minutes, so a manual run can't overlap a scheduled one (or Actions
+# overlap Lambda) and double-spend the per-day Gemini budget, which only counts
+# *finished* runs. It is also a lease: a run that dies without finishing (Lambda's
+# 15-minute cap, Actions' 25-minute cap, a killed process) leaves a RUNNING row
+# that stops blocking once it is this old. Must exceed the longest legitimate run.
+RUN_LOCK_TTL_MINUTES = int(os.getenv("RUN_LOCK_TTL_MINUTES", "30"))
+
 # Retry cap for an email whose extraction keeps FAILING (an error caught
 # per-email, e.g. an unparseable date or a bad LLM response). Without a cap,
 # a deterministic failure re-calls Gemini every run forever. Once a FAILED
