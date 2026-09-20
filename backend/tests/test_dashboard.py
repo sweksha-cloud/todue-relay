@@ -202,14 +202,19 @@ class TestRemovedItemsAreHidden:
         assert row.calendar_event_id is None
         assert "e1" in repository.get_terminal_email_ids(db_session, ["e1"])  # the pipeline won't reprocess it
 
-    def test_a_removal_still_counts_as_an_incorrect_vote(self, client, db_session, calendar_calls):
+    def test_a_removal_is_not_an_incorrect_vote(self, client, db_session, calendar_calls):
+        """Removing an email means "I don't want this on my calendar", not "the model got it
+        wrong". It must not change the correction rate, and it doesn't record a verdict.
+        """
         _completed_row(db_session, "e1")
         _completed_row(db_session, "e2", event_id="cal-2", subject="Kept")
         repository.set_correction(db_session, "e2", True)
+        assert repository.get_correction_rate(db_session) == 1.0
 
         client.post("/emails/e1/remove")
 
-        assert repository.get_correction_rate(db_session) == 0.5  # 1 correct, 1 incorrect (the removal)
+        assert repository.get_correction_rate(db_session) == 1.0  # unchanged: the removal is not a vote
+        assert db_session.get(ProcessedEmail, "e1").user_correction is None  # no verdict was recorded
 
     def test_rows_with_no_error_message_or_other_errors_are_still_listed(self, db_session):
         _completed_row(db_session, "e1", subject="Plain row", event_id=None)
@@ -335,3 +340,45 @@ class TestScheduleActionItem:
         assert client.post("/emails/a1/schedule", data={"new_datetime": "not-a-date"}).status_code == 400
         assert create_calls["created"] == []
         assert db_session.get(ProcessedEmail, "a1").calendar_event_id is None
+
+
+# --- Correction-rate statistics ----------------------------------------------------------
+def _vote(db_session, email_id, is_correct, subject="Some deadline"):
+    _completed_row(db_session, email_id, subject=subject, event_id=None)
+    repository.set_correction(db_session, email_id, is_correct)
+
+
+class TestRemovedItemsAreNotVotes:
+    def test_explicit_correct_and_incorrect_votes_still_count(self, db_session):
+        _vote(db_session, "e1", True, "One")
+        _vote(db_session, "e2", False, "Two")
+        _vote(db_session, "e3", True, "Three")
+
+        assert repository.get_correction_rate(db_session) == pytest.approx(2 / 3)
+        weeks = metrics.weekly_correction_rate(db_session)
+        assert (weeks[-1]["correct"], weeks[-1]["total"]) == (2, 3)
+
+    def test_removed_rows_are_excluded_from_both_rates_including_legacy_ones(self, db_session):
+        """Rows removed before this change were stored as an incorrect vote with the old
+        "(marked incorrect)" text; they must stop counting too, without a data migration.
+        """
+        _vote(db_session, "e1", True, "Kept and correct")
+        _vote(db_session, "e2", False, "Wrong extraction")
+        for email_id, marker in (
+            ("r_new", repository.REMOVED_BY_USER_MESSAGE),
+            ("r_legacy", "removed from calendar by user (marked incorrect)"),
+        ):
+            _vote(db_session, email_id, False, f"Removed {email_id}")
+            db_session.get(ProcessedEmail, email_id).error_message = marker
+        db_session.commit()
+
+        assert repository.get_correction_rate(db_session) == 0.5  # 1 correct of the 2 real votes
+        weeks = metrics.weekly_correction_rate(db_session)
+        assert (weeks[-1]["correct"], weeks[-1]["total"]) == (1, 2)
+
+    def test_a_reschedule_still_counts_as_a_wrong_vote(self, db_session):
+        """Moving the time means the extracted time was wrong, which is a real verdict."""
+        _completed_row(db_session, "e1")
+        repository.reschedule_email(db_session, "e1", datetime.now(timezone.utc) + timedelta(days=9), has_time=True)
+
+        assert repository.get_correction_rate(db_session) == 0.0

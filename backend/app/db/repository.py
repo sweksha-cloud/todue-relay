@@ -336,13 +336,14 @@ def get_terminal_email_ids(session: Session, email_ids: list[str]) -> set[str]:
     return set(session.execute(stmt).scalars().all())
 
 
-def _not_removed():
+def not_removed():
     """Rows the user did not remove with the dashboard's Remove button. Removed rows are
     kept in the table on purpose (the pipeline treats SKIPPED as done, so the email is never
-    re-added, and the "incorrect" vote still counts toward the correction rate); they are just
-    not listed. NULL-safe: most rows have no error_message at all.
+    re-added) but they are neither listed nor counted as votes: removing an email means "I don't
+    want this on my calendar", not "the model got it wrong". NULL-safe: most rows have no
+    error_message at all.
     """
-    return ProcessedEmail.error_message.is_(None) | (ProcessedEmail.error_message != REMOVED_BY_USER_MESSAGE)
+    return ProcessedEmail.error_message.is_(None) | ProcessedEmail.error_message.not_in(_REMOVED_MESSAGES)
 
 
 def _recent_emails_filter():
@@ -356,7 +357,7 @@ def _recent_emails_filter():
         ProcessedEmail.extraction_action_type.is_(None)
         | (ProcessedEmail.extraction_action_type == ActionType.DEADLINE)
         | ProcessedEmail.calendar_event_id.is_not(None)
-    ) & _not_removed()
+    ) & not_removed()
 
 
 def list_recent_emails(session: Session, limit: int = 25, offset: int = 0) -> list[ProcessedEmail]:
@@ -454,19 +455,25 @@ def reschedule_email(
 
 
 # error_message written by remove_calendar_event. It doubles as the marker that hides a
-# removed item from the dashboard lists (see _not_removed): no schema change needed, and
-# rows removed before this filter existed already carry the same text.
-REMOVED_BY_USER_MESSAGE = "removed from calendar by user (marked incorrect)"
+# removed item from the dashboard lists and keeps it out of the correction-rate statistics
+# (see not_removed): no schema change needed. Rows removed before Remove stopped counting as
+# a vote carry the legacy text, so both are recognised.
+REMOVED_BY_USER_MESSAGE = "removed from calendar by user"
+_LEGACY_REMOVED_BY_USER_MESSAGE = "removed from calendar by user (marked incorrect)"
+_REMOVED_MESSAGES = (REMOVED_BY_USER_MESSAGE, _LEGACY_REMOVED_BY_USER_MESSAGE)
 
 
 def remove_calendar_event(session: Session, email_id: str) -> ProcessedEmail:
-    """The "remove from calendar" side of marking an auto-created event
-    wrong: the Calendar event itself is deleted by the caller
-    (calendar_client.delete_event) — this records that outcome and, by
-    clearing calendar_event_id and moving to SKIPPED (not back to
-    COMPLETED-without-an-event), prevents it from ever reappearing as a
-    'needs review' item that could be approved into creating the event
-    right back.
+    """The "remove from calendar" path: the Calendar event itself is deleted by the caller
+    (calendar_client.delete_event) — this records that outcome and, by clearing
+    calendar_event_id and moving to SKIPPED (not back to COMPLETED-without-an-event),
+    prevents it from ever reappearing as a 'needs review' item that could be approved into
+    creating the event right back.
+
+    Removing is NOT a verdict on the extraction: the user may just not want it on their
+    calendar, so user_correction is left untouched and the row is excluded from the
+    correction-rate statistics (see not_removed). An explicit "Incorrect" vote is a separate
+    action.
     """
     row = session.get(ProcessedEmail, email_id)
     if row is None:
@@ -474,7 +481,6 @@ def remove_calendar_event(session: Session, email_id: str) -> ProcessedEmail:
 
     row.status = ProcessingStatus.SKIPPED
     row.calendar_event_id = None
-    row.user_correction = False
     row.error_message = REMOVED_BY_USER_MESSAGE
     row.completed_at = datetime.now(timezone.utc)
     session.commit()
@@ -563,11 +569,12 @@ def get_latest_run(session: Session) -> PipelineRun | None:
 
 def get_correction_rate(session: Session) -> float | None:
     """Fraction of reviewed extractions marked correct. None if nothing's been reviewed yet."""
+    # Removed items are not votes (see not_removed).
     total_stmt = select(func.count()).select_from(ProcessedEmail).where(
-        ProcessedEmail.user_correction.is_not(None)
+        ProcessedEmail.user_correction.is_not(None), not_removed()
     )
     correct_stmt = select(func.count()).select_from(ProcessedEmail).where(
-        ProcessedEmail.user_correction.is_(True)
+        ProcessedEmail.user_correction.is_(True), not_removed()
     )
     total = session.execute(total_stmt).scalar_one()
     if total == 0:
@@ -584,7 +591,7 @@ def _action_items_filter():
         ProcessedEmail.extraction_action_type.in_([ActionType.NEEDS_REPLY, ActionType.UNCLEAR])
         & ProcessedEmail.duplicate_of_email_id.is_(None)
         & ProcessedEmail.calendar_event_id.is_(None)  # once scheduled it is no longer "no fixed date"
-        & _not_removed()
+        & not_removed()
     )
 
 
