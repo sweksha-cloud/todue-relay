@@ -219,6 +219,26 @@ checks. `aws/build_lambda.sh` packages it inside AWS's own Lambda Python image
 defined in `aws/template.yaml` (AWS SAM, stack `todue-relay-sam`). Deploying is manual: build the zip,
 then run `sam deploy` from `aws/`; there is no automated deploy yet.
 
+```mermaid
+flowchart LR
+    subgraph AWS["AWS us-east-2, defined in aws/template.yaml (SAM)"]
+        direction LR
+        S["EventBridge Scheduler<br/>hourly, cron in UTC"] --> L["Lambda: run_pipeline<br/>Python 3.14, arm64"]
+        SM[("Secrets Manager<br/>Gemini key, DB URL")] --> L
+        L -. "metrics" .-> AL["2 CloudWatch alarms<br/>errors, not running"]
+        AL --> SNS["SNS email"]
+    end
+    subgraph EXT["External APIs"]
+        direction TB
+        GM["Gmail, read-only"]
+        GE["Gemini"]
+        GC["Google Calendar"]
+    end
+    L --> EXT
+    L <--> N[("Neon Postgres<br/>runs, claims, OAuth token")]
+    N --> D["Dashboard: FastAPI + htmx<br/>runs locally"]
+```
+
 - **Least privilege.** The function's execution role can write one log group and read
   one secret. A separate scheduler role can only invoke the function. The policy
   templates are in `aws/iam/`, and were checked with IAM Access Analyzer.
