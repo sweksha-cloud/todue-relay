@@ -176,7 +176,9 @@ in layers:
   email's fault (Gemini's 429 rate limits and 5xx "high demand" errors, a dropped connection) don't
   count toward it, but only while the email is younger than `TRANSIENT_RETRY_WINDOW_HOURS` (48), so a
   permanent server error cannot be retried forever. `python -m scripts.retry_failed` gives emails
-  that an outage parked before this a fresh set of attempts.
+  that an outage parked before this a fresh set of attempts. An email that does fail for good is
+  called out in a banner on the dashboard and emailed once through the same alert topic as the
+  CloudWatch alarms (decision 26).
 - **Dry run:** shows what a run would do without spending anything
   (`--dry-run`, or the dashboard button).
 
@@ -204,7 +206,7 @@ TEST_DATABASE_URL=postgresql+psycopg://postgres:test@localhost:55432/testdb \
   python -m pytest tests/ -v
 ```
 
-329 tests across 20 files (plus 92 for the Gmail add-on), covering date and timezone parsing, pre-filter
+360 tests across 21 files (plus 92 for the Gmail add-on), covering date and timezone parsing, pre-filter
 scoring, LLM response validation (including 429 and 5xx handling), Calendar event
 construction (including recurrence), duplicate-deadline matching, the idempotency
 claim logic and retry cap, the daily call budget and dry-run mode (driving the
@@ -313,7 +315,7 @@ backend/
   requirements.txt              # full app (pipeline + dashboard)
   requirements-lambda.txt       # pipeline-only, for the Lambda package
   requirements-dev.txt
-  tests/                        # 329 tests, run against real Postgres
+  tests/                        # 360 tests, run against real Postgres
 addon/                          # Gmail add-on (Apps Script, TypeScript): a read-only home card
 docs/
   design-decisions.md           # 23 decisions: what else was considered, and the evidence

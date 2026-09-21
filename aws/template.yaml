@@ -72,6 +72,10 @@ Resources:
                 Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AppName}-pipeline:*
+              - Sid: EmailAlertsToThePersonWhoOwnsIt
+                Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref AlertTopic
               - Sid: ReadThePipelineSecret
                 Effect: Allow
                 Action: secretsmanager:GetSecretValue
@@ -99,6 +103,7 @@ Resources:
           FILTER_LEVEL: moderate
           FETCH_WINDOW_DAYS: "2"
           CALENDAR_TIMEZONE: America/Los_Angeles
+          ALERT_TOPIC_ARN: !Ref AlertTopic  # emailed when an email is parked for good
       # Scheduled invocations are asynchronous. No retries: the next hourly run is the
       # retry, and a retry of a run that timed out would just run twice.
       EventInvokeConfig:

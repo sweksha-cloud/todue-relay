@@ -79,6 +79,12 @@ MAX_ATTEMPTS_PER_EMAIL = int(os.getenv("MAX_ATTEMPTS_PER_EMAIL", "3"))
 # See docs/design-decisions.md, decision 25.
 TRANSIENT_RETRY_WINDOW_HOURS = int(os.getenv("TRANSIENT_RETRY_WINDOW_HOURS", "48"))
 
+# An SNS topic the pipeline emails when an email is parked for good (it failed MAX_ATTEMPTS_PER_EMAIL
+# times and will not be retried automatically). On AWS it is the same topic the CloudWatch alarms use,
+# set by the SAM template. Empty (local runs, GitHub Actions) means no alert is sent, only logged.
+# See docs/design-decisions.md, decision 26.
+ALERT_TOPIC_ARN = os.getenv("ALERT_TOPIC_ARN", "").strip()
+
 # Length of a timed Calendar event when the deadline has an explicit time.
 # Decided 2026-09-15: 0 — a point-in-time marker exactly at the deadline
 # ("due at 5" -> an event at 5, not a 5:00-5:30 block). A date-only

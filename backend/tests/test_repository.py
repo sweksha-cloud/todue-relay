@@ -653,3 +653,39 @@ class TestUnparkTransientFailures:
         repository.unpark_transient_failures(db_session)
 
         assert db_session.get(ProcessedEmail, "outage").error_message == "ServerError: 503 UNAVAILABLE"
+
+
+class TestParkedFailures:
+    def test_only_failed_emails_out_of_attempts_are_parked(self, db_session):
+        _failed_row(db_session, "parked", "ValueError: bad", attempts=3)
+        _failed_row(db_session, "retrying", "ValueError: bad", attempts=1)
+        repository.try_claim_email(db_session, "done", "t", "s")
+        done = db_session.get(ProcessedEmail, "done")
+        done.status, done.attempt_count = ProcessingStatus.COMPLETED, 3
+        db_session.commit()
+
+        assert repository.count_parked_failures(db_session) == 1
+        assert [r.email_id for r in repository.list_parked_failures(db_session)] == ["parked"]
+        assert repository.is_parked(db_session, "parked") is True
+        assert repository.is_parked(db_session, "retrying") is False
+        assert repository.is_parked(db_session, "done") is False
+        assert repository.is_parked(db_session, "nope") is False
+
+    def test_the_list_is_newest_first_and_limited_but_the_count_is_the_true_total(self, db_session):
+        for i in range(4):
+            _failed_row(db_session, f"p{i}", "ValueError: bad", attempts=3)
+            row = db_session.get(ProcessedEmail, f"p{i}")
+            row.updated_at = datetime.now(timezone.utc) + timedelta(minutes=i)
+            db_session.commit()
+
+        listed = repository.list_parked_failures(db_session, limit=2)
+
+        assert [r.email_id for r in listed] == ["p3", "p2"]
+        assert repository.count_parked_failures(db_session) == 4
+
+    def test_unparking_removes_them_from_the_parked_count(self, db_session):
+        _failed_row(db_session, "outage", "ServerError: 503", attempts=3)
+
+        repository.unpark_transient_failures(db_session)
+
+        assert repository.count_parked_failures(db_session) == 0

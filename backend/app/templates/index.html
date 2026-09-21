@@ -21,6 +21,19 @@
   {% endif %}
 </div>
 
+{% if parked_count %}
+<div class="card parked-banner" style="border-left: 4px solid #c0392b;">
+  <strong>{{ parked_count }} email{{ "" if parked_count == 1 else "s" }} failed and will not be retried automatically.</strong>
+  <ul style="margin: 6px 0 6px 18px;">
+    {% for e in parked %}
+      <li>{{ e.email_subject }} <span class="verdict">&mdash; {{ (e.error_message or "no error recorded") | truncate(90) }}</span></li>
+    {% endfor %}
+    {% if parked_count > parked | length %}<li class="verdict">and {{ parked_count - (parked | length) }} more</li>{% endif %}
+  </ul>
+  <span class="verdict">If the error is a temporary Gemini one (503 or 429), <code>python -m scripts.retry_failed --apply</code> gives them fresh attempts.</span>
+</div>
+{% endif %}
+
 <div class="card summary-row">
   <div class="stat">
     <div class="num">{{ caught_this_week }}</div>

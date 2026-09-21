@@ -221,6 +221,82 @@ def _spend(db_session, calls):
     )
 
 
+class TestAlertWhenAnEmailIsParked:
+    """Runs report SUCCESS whenever they complete, so a run that fails on the same emails hour after hour
+    looked healthy: three good emails sat parked for days. The pipeline now emails when one is parked."""
+
+    @pytest.fixture(autouse=True)
+    def _two_attempts_and_a_captured_alert(self, monkeypatch):
+        monkeypatch.setattr(repository, "MAX_ATTEMPTS_PER_EMAIL", 2)
+        self.sent = []
+        monkeypatch.setattr(pipeline.alerts, "notify_parked", lambda parked, **kw: self.sent.append(parked))
+
+    def test_no_alert_while_an_email_still_has_attempts_left(self, harness):
+        harness.fail_ids = {"e1"}
+        harness.emails = [_email(id="e1")]
+
+        result = pipeline.run_pipeline()  # attempt 1 of 2
+
+        assert result["failed"] == 1 and result["newly_parked"] == []
+        assert self.sent == []
+
+    def test_one_alert_when_the_last_attempt_fails_and_none_after(self, harness):
+        harness.fail_ids = {"e1"}
+        harness.emails = [_email(id="e1")]
+        pipeline.run_pipeline()  # attempt 1
+
+        second = pipeline.run_pipeline()  # attempt 2: parked now
+        third = pipeline.run_pipeline()  # no longer claimed, so no second alert
+
+        assert second["newly_parked"] == ["e1"]
+        assert len(self.sent) == 1
+        assert self.sent[0][0]["id"] == "e1" and "bad response" in self.sent[0][0]["error"]
+        assert third["newly_parked"] == [] and len(self.sent) == 1
+
+    def test_everything_parked_in_one_run_is_one_alert(self, harness):
+        harness.fail_ids = {"e1", "e2"}
+        harness.emails = [_email(id="e1"), _email(id="e2")]
+        pipeline.run_pipeline()
+
+        pipeline.run_pipeline()
+
+        assert len(self.sent) == 1 and {p["id"] for p in self.sent[0]} == {"e1", "e2"}
+
+    def test_a_transient_failure_never_parks_an_email_so_never_alerts(self, harness, monkeypatch):
+        def outage(email):
+            raise LLMTransientError("503 UNAVAILABLE")
+
+        monkeypatch.setattr(pipeline, "extract_deadline", outage)
+        harness.emails = [_email(id="e1")]
+
+        for _ in range(6):
+            pipeline.run_pipeline()
+
+        assert self.sent == []
+
+    def test_a_dry_run_never_alerts(self, harness, db_session):
+        harness.fail_ids = {"e1"}
+        harness.emails = [_email(id="e1")]
+
+        pipeline.run_pipeline(dry_run=True)
+
+        assert self.sent == []
+
+    def test_a_problem_sending_the_alert_does_not_fail_the_run(self, harness, db_session, monkeypatch):
+        def broken(parked, **kw):
+            raise RuntimeError("SNS is down")
+
+        monkeypatch.setattr(pipeline.alerts, "notify_parked", broken)
+        harness.fail_ids = {"e1"}
+        harness.emails = [_email(id="e1")]
+        pipeline.run_pipeline()
+
+        result = pipeline.run_pipeline()  # parks it; the alert blows up
+
+        assert result["newly_parked"] == ["e1"]
+        assert repository.get_latest_run(db_session).status == RunStatus.SUCCESS
+
+
 class TestDailyBudgetGuard:
     def test_stops_claiming_once_the_budget_is_spent(self, harness, db_session):
         _spend(db_session, 6)  # 8 budget - 6 already spent = 2 left

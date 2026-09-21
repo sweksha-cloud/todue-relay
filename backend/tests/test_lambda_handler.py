@@ -105,3 +105,31 @@ def test_handler_propagates_pipeline_failure(monkeypatch):
 
     with pytest.raises(RuntimeError, match="gmail down"):
         lambda_handler.handler({}, None)  # must raise so Lambda records an error
+
+
+def test_test_alert_event_sends_an_alert_and_runs_no_pipeline(monkeypatch):
+    import app.alerts
+
+    sent, ran = [], []
+    monkeypatch.setattr(app.alerts, "send_alert", lambda subject, message, client=None: sent.append(subject) or True)
+    monkeypatch.setattr(lambda_handler, "_init_once", lambda: None)
+    monkeypatch.setattr("app.pipeline.run_pipeline", lambda **kw: ran.append(kw) or {})
+
+    result = lambda_handler.handler({"test_alert": True}, None)
+
+    assert result == {"test_alert": True, "sent": True}
+    assert sent == ["ToDue Relay: test alert"] and ran == []
+
+
+@pytest.mark.parametrize("value", ["true", 1, "yes"])
+def test_only_a_literal_true_sends_a_test_alert(monkeypatch, value):
+    import app.alerts
+
+    sent = []
+    monkeypatch.setattr(app.alerts, "send_alert", lambda *a, **k: sent.append(1) or True)
+    monkeypatch.setattr(lambda_handler, "_init_once", lambda: None)
+    monkeypatch.setattr("app.pipeline.run_pipeline", lambda **kw: {"dry_run": kw.get("dry_run")})
+
+    lambda_handler.handler({"test_alert": value}, None)
+
+    assert sent == []

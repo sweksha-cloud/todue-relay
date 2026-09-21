@@ -291,6 +291,36 @@ reasons, reverting the pipeline to refund only 429s, and dropping the 5xx transl
 the test meant for it.
 
 
+### 26. Tell a person when an email fails for good
+**The gap.** A run reports SUCCESS whenever the run itself completes, however many emails failed inside it.
+Three good emails sat parked for days, with 2 failures per hourly run, before anyone noticed: the existing
+alarms watch for a function error or a schedule that stopped, and neither fires when the function runs fine
+and quietly gives up on individual emails.
+**The fix.** When an email uses its last attempt, the run sends one email through the alert topic the
+CloudWatch alarms already use, so there is nothing new to subscribe to. It lists the emails and the error,
+and says how to retry a temporary one. The dashboard also shows a banner for anything currently parked, so the
+state is visible even if the email was missed. One alert per run however many emails were parked, and none
+for an email that fails but has attempts left (that is retried, and a transient error never parks it).
+**Why "parked" is the trigger.** Alerting on every failure would email through every Gemini blip, which is
+exactly what decision 25 stopped counting. Parking is the rare, permanent, actionable event. It is detected
+where it happens: a failed email is only claimed again while it has attempts left, so one that is out of
+attempts right after failing has just been parked, and cannot alert twice.
+**It cannot hurt a run.** Sending is best-effort: no topic configured (a local run, GitHub Actions) only logs;
+an SNS error is swallowed and logged; and the pipeline wraps the call as well, so a notification problem can
+never turn a good run into a failed one.
+**Least privilege.** The function's role gains `sns:Publish` on that one topic and nothing else; the topic
+address reaches it as an environment variable set by the template.
+**Checking it end to end.** Invoking the function with `{"test_alert": true}` sends a test alert and runs
+nothing else, which proves the role may publish and the email arrives.
+**Evidence.** 31 new tests. Deliberately alerting on every failure, letting an alert error fail the run,
+counting an email as parked while it has attempts left, and sending an unsanitised subject were each caught by
+the test meant for it. One further change (alerting in a dry run) cannot be caught, and does not need to be:
+a dry run never claims an email, so nothing can fail there; the guard is defence in depth.
+**Alternatives.** A CloudWatch metric filter and alarm on a log line avoids touching the function's role but
+adds two more resources (and permissions for the deploy role) for a rare event; an alarm on the run's
+failed-email count would fire on every transient blip, the noise decision 25 removed.
+
+
 ---
 
 ## Scaling to other users (a plan; not built)

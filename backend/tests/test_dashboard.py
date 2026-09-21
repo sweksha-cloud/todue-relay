@@ -473,3 +473,59 @@ class TestIncorrectAndRescheduleOnALiveEvent:
         assert repository.list_recent_emails(db_session)[0].email_id == "e2"  # e1 is hidden
         assert event_calls["deleted"] == ["cal-1"]
         assert repository.get_correction_rate(db_session) == 0.5  # the explicit incorrect vote still counts
+
+
+class TestParkedEmailBanner:
+    """An email that failed for good must be visible on the main page, not only in the history list."""
+
+    def _fail(self, db_session, email_id, subject="Some subject", error="ServerError: 503 UNAVAILABLE", attempts=3):
+        repository.try_claim_email(db_session, email_id, f"t-{email_id}", subject)
+        repository.mark_failed(db_session, email_id, error)
+        db_session.get(ProcessedEmail, email_id).attempt_count = attempts
+        db_session.commit()
+
+    def test_a_parked_email_is_called_out_with_its_subject_and_error(self, client, db_session):
+        self._fail(db_session, "e1", subject="Direct Consideration #007")
+
+        html = client.get("/").text
+
+        assert "1 email failed and will not be retried automatically." in html
+        assert "Direct Consideration #007" in html
+        assert "503 UNAVAILABLE" in html
+
+    def test_it_says_what_to_do_about_a_temporary_error(self, client, db_session):
+        self._fail(db_session, "e1")
+
+        assert "python -m scripts.retry_failed --apply" in client.get("/").text
+
+    def test_several_are_pluralised_and_the_extras_counted(self, client, db_session):
+        for i in range(7):
+            self._fail(db_session, f"e{i}", subject=f"Subject number {i}")
+
+        html = client.get("/").text
+
+        assert "7 emails failed and will not be retried automatically." in html
+        assert "and 2 more" in html  # five are listed
+
+    def test_no_banner_when_nothing_has_failed_for_good(self, client, db_session):
+        assert "will not be retried automatically" not in client.get("/").text
+
+    def test_an_email_that_will_still_be_retried_does_not_trigger_it(self, client, db_session):
+        self._fail(db_session, "e1", attempts=1)
+
+        assert "will not be retried automatically" not in client.get("/").text
+
+    def test_a_subject_containing_html_is_escaped(self, client, db_session):
+        self._fail(db_session, "e1", subject="<script>alert(1)</script>", error="<img src=x onerror=alert(2)>")
+
+        html = client.get("/").text
+
+        assert "<script>alert(1)</script>" not in html and "<img src=x onerror=alert(2)>" not in html
+        assert "&lt;script&gt;" in html
+
+    def test_a_long_error_is_shortened(self, client, db_session):
+        self._fail(db_session, "e1", error="ServerError: " + "x" * 500)
+
+        html = client.get("/").text
+
+        assert "x" * 200 not in html

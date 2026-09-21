@@ -33,10 +33,11 @@ from app.config import (
 )
 from app.date_utils import has_explicit_time, is_plausible
 from app.db import repository
-from app.db.models import RunStatus
+from app.db.models import ProcessedEmail, RunStatus
 from app.db.session import get_session
 from app.filters import contains_reschedule_language, is_deadline_candidate
 from app.gmail_client import fetch_messages_by_ids, fetch_recent_messages, get_gmail_service
+from app import alerts
 from app.llm_client import LLMTransientError, extract_deadline
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ def run_pipeline(*, dry_run: bool = False) -> dict:
     fetched = processed = failed = filtered_out = already_terminal = deferred = would_process = 0
     would_process_ids: list[str] = []
     stuck_ids: list[str] = []
+    newly_parked: list[dict] = []
 
     def finish(status: RunStatus, error_message: str | None = None) -> None:
         if run is None:  # dry run: nothing is ever recorded
@@ -116,6 +118,11 @@ def run_pipeline(*, dry_run: bool = False) -> dict:
                 processed += 1
             elif outcome == "failed":
                 failed += 1
+                # An email that fails is only claimed again while it has attempts left, so one that is out of
+                # attempts now has just been parked for good: that is worth telling a person about.
+                if repository.is_parked(session, email.id):
+                    row = session.get(ProcessedEmail, email.id)
+                    newly_parked.append({"id": email.id, "subject": email.subject, "error": row.error_message if row else None})
             elif outcome == "filtered_out":
                 filtered_out += 1
             elif outcome == "deferred":
@@ -173,6 +180,12 @@ def run_pipeline(*, dry_run: bool = False) -> dict:
                 GEMINI_DAILY_QUOTA, GEMINI_DAILY_RESERVE, deferred,
             )
 
+        if newly_parked and not dry_run:
+            try:
+                alerts.notify_parked(newly_parked)
+            except Exception:  # noqa: BLE001 - a notification problem must never turn a good run into a failed one
+                logger.exception("Could not send the parked-email alert")
+
         finish(RunStatus.SUCCESS)
     except Exception as e:
         logger.exception("Pipeline run failed")
@@ -192,6 +205,7 @@ def run_pipeline(*, dry_run: bool = False) -> dict:
         "would_process": would_process,
         "would_process_ids": would_process_ids,
         "recovery_candidate_ids": stuck_ids,
+        "newly_parked": [p["id"] for p in newly_parked],
         "skipped_run": False,
     }
 
@@ -208,6 +222,7 @@ def _empty_summary(*, skipped_run: bool) -> dict:
         "would_process": 0,
         "would_process_ids": [],
         "recovery_candidate_ids": [],
+        "newly_parked": [],
         "skipped_run": skipped_run,
     }
 

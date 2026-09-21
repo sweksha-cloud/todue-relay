@@ -69,6 +69,8 @@ def dashboard(
     emails = repository.list_recent_emails(db, limit=HISTORY_PAGE_SIZE, offset=offset)
     action_items = repository.list_action_items(db, limit=ACTION_ITEMS_PAGE_SIZE, offset=action_offset)
     latest_run = repository.get_latest_run(db)
+    parked_count = repository.count_parked_failures(db)
+    parked = repository.list_parked_failures(db, limit=5)
     correction_rate = repository.get_correction_rate(db)
     since = datetime.now(timezone.utc) - timedelta(days=7)
     caught_this_week = repository.count_deadlines_caught_since(db, since)
@@ -83,6 +85,8 @@ def dashboard(
             "emails": emails,
             "action_items_by_day": action_items_by_day,
             "latest_run": latest_run,
+            "parked_count": parked_count,
+            "parked": parked,
             "correction_rate": correction_rate,
             "caught_this_week": caught_this_week,
             "llm_usage": llm_usage,

@@ -744,3 +744,23 @@ def list_upcoming_on_calendar(session: Session, since: datetime, limit: int = 10
 def count_upcoming_on_calendar(session: Session, since: datetime) -> int:
     stmt = select(func.count()).select_from(ProcessedEmail).where(_upcoming_filter(since))
     return session.execute(stmt).scalar_one()
+
+
+def _parked_filter():
+    # "Parked": failed and out of attempts, so nothing will retry it automatically.
+    return (ProcessedEmail.status == ProcessingStatus.FAILED) & (ProcessedEmail.attempt_count >= MAX_ATTEMPTS_PER_EMAIL)
+
+
+def is_parked(session: Session, email_id: str) -> bool:
+    row = session.get(ProcessedEmail, email_id, populate_existing=True)
+    return row is not None and row.status == ProcessingStatus.FAILED and row.attempt_count >= MAX_ATTEMPTS_PER_EMAIL
+
+
+def count_parked_failures(session: Session) -> int:
+    return session.execute(select(func.count()).select_from(ProcessedEmail).where(_parked_filter())).scalar_one()
+
+
+def list_parked_failures(session: Session, limit: int = 5) -> list[ProcessedEmail]:
+    """Emails that failed for good, most recently failed first."""
+    stmt = select(ProcessedEmail).where(_parked_filter()).order_by(ProcessedEmail.updated_at.desc()).limit(limit)
+    return list(session.execute(stmt).scalars().all())

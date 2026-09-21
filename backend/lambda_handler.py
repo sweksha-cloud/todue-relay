@@ -10,7 +10,9 @@ unchanged. This file only does the three things Lambda needs that a plain
    the environment at import time, so importing them first would freeze in
    empty values.
 3. Accept a manual/test event: {"dry_run": true} runs the pipeline's
-   --dry-run mode (zero Gemini calls, zero writes).
+   --dry-run mode (zero Gemini calls, zero writes), and {"test_alert": true}
+   sends a test email through the alert topic (nothing else runs), to prove
+   the function may publish there and the email arrives.
 
 Lambda handler string: `lambda_handler.handler`.
 
@@ -82,11 +84,19 @@ def handler(event, context):
     run raises (run_pipeline re-raises after recording the failure), so
     Lambda reports it as an error.
 
-    event: {"dry_run": true} for a check that spends no Gemini quota. Anything
-    else — including the scheduler's own payload — is a real run. Only a
-    literal JSON `true` counts, so the string "false" can't switch it on.
+    event: {"dry_run": true} for a check that spends no Gemini quota; {"test_alert": true}
+    to send a test alert and run nothing else. Anything else — including the scheduler's
+    own payload — is a real run. Only a literal JSON `true` counts, so the string "false"
+    can't switch either on.
     """
     _init_once()
+
+    if isinstance(event, dict) and event.get("test_alert") is True:
+        from app import alerts
+
+        sent = alerts.send_alert("ToDue Relay: test alert", "This is a test alert from the pipeline. If you can read it, alerting works.")
+        logger.info("Test alert sent=%s", sent)
+        return {"test_alert": True, "sent": sent}
 
     # Imported here, after the secrets are in the environment — see module docstring.
     from app.pipeline import run_pipeline
