@@ -64,6 +64,9 @@ flowchart LR
 | CI runners and Lambda have no persistent disk | The Google OAuth token lives in Postgres, not a local file; the local copy is only a best-effort dev mirror | `app/google_auth.py` |
 | Least privilege | Gmail access is `readonly`; Calendar access is events-only; workflows run with `contents: read` | `app/config.py`, `.github/workflows/` |
 
+The reasoning behind these, with the alternatives considered and the evidence, is in
+[docs/design-decisions.md](docs/design-decisions.md).
+
 ## Setup
 
 ### 1. Google Cloud: Gmail and Calendar access
