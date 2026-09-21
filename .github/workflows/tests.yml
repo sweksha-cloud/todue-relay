@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Also callable from deploy.yml, so a deploy is gated by its own test run on the same commit.
+  workflow_call:
 
 # Least privilege: only checks out code and runs pytest against a
 # throwaway service-container database — never touches the GitHub API.

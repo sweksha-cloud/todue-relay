@@ -1,0 +1,88 @@
+name: Deploy to AWS
+
+# Deploys the app stack (aws/template.yaml) when a change that affects the Lambda lands on main.
+# GitHub authenticates to AWS with a short-lived OIDC token, so no AWS keys are stored anywhere:
+# the deploy role's trust policy (aws/ci-template.yaml) accepts tokens only for this repository on
+# main. Rollback is `git revert` and push, or run this workflow manually from main.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/app/**"
+      - "backend/lambda_handler.py"
+      - "backend/requirements-lambda.txt"
+      - "aws/template.yaml"
+      - "aws/build_lambda.sh"
+      - "aws/samconfig.toml"
+  workflow_dispatch: {}
+
+# Least privilege: the workflow as a whole only reads code; only the deploy job may request the
+# OIDC token.
+permissions:
+  contents: read
+
+# One deploy at a time, and never cancel one halfway through a CloudFormation update.
+concurrency:
+  group: deploy-aws
+  cancel-in-progress: false
+
+jobs:
+  test:
+    uses: ./.github/workflows/tests.yml
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    # The Lambda is arm64. A native arm64 runner (free on public repos) builds it without
+    # emulation, inside AWS's own Lambda image so the compiled wheels match.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    permissions:
+      id-token: write   # ask GitHub for the OIDC token
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the Lambda package
+        run: |
+          docker --version
+          aws/build_lambda.sh
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install the SAM CLI
+        run: pip install aws-sam-cli
+
+      - name: Assume the deploy role (OIDC, no stored keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-2
+
+      - name: Deploy the stack
+        working-directory: aws
+        env:
+          CFN_ROLE_ARN: ${{ secrets.AWS_CFN_ROLE_ARN }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+        run: |
+          sam deploy \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --role-arn "$CFN_ROLE_ARN" \
+            --parameter-overrides "AlertEmail=$ALERT_EMAIL"
+
+      # A dry run reads Gmail and the database and writes nothing, and spends no Gemini quota. It
+      # proves the deployed package imports, loads its secret and connects.
+      - name: Smoke test the deployed function
+        run: |
+          aws lambda invoke \
+            --function-name todue-relay-sam-pipeline \
+            --cli-binary-format raw-in-base64-out \
+            --cli-read-timeout 300 \
+            --payload '{"dry_run": true}' \
+            response.json > invoke-meta.json
+          cat invoke-meta.json
+          echo; cat response.json; echo
+          jq -e '.StatusCode == 200 and (has("FunctionError") | not)' invoke-meta.json

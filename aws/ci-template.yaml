@@ -1,0 +1,238 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Lets GitHub Actions deploy the ToDue Relay stack (aws/template.yaml) with no AWS keys stored in
+  GitHub. GitHub proves who it is with a short-lived OIDC token; AWS trusts that token only for
+  this repository on the main branch, and hands back temporary credentials.
+
+# This is a separate stack from aws/template.yaml on purpose: the role GitHub assumes must not be
+# something the deploy itself can rewrite. Deploy it once by hand (it creates IAM resources), then
+# GitHub does every later deploy of the app stack:
+#   cd aws && sam deploy -t ci-template.yaml --stack-name todue-relay-ci --region us-east-2 \
+#     --capabilities CAPABILITY_NAMED_IAM --resolve-s3
+#
+# Two roles, two jobs (the pattern AWS recommends for CI):
+#   DeployRole  what GitHub can assume. It can only ask CloudFormation to update ONE stack, upload
+#               to SAM's bucket, invoke the function for the smoke test, and hand the second role to
+#               CloudFormation. It cannot create a Lambda, a role or a schedule itself.
+#   CfnRole     what CloudFormation uses while applying the stack. Every permission is limited to
+#               the named resources of the app stack.
+
+Parameters:
+  AppName:
+    Type: String
+    Default: todue-relay-sam
+    Description: Prefix of the app stack's resources (its function is <AppName>-pipeline).
+  AppStackName:
+    Type: String
+    Default: todue-relay-sam
+    Description: Name of the CloudFormation stack this pipeline is allowed to deploy.
+  GitHubSubject:
+    Type: String
+    Default: repo:sweksha-cloud@188623803/todue-relay@1370678233:ref:refs/heads/main
+    Description: >
+      The only token identity allowed to deploy: pushes to main of this repository. This uses
+      GitHub's immutable subject format (owner and repository IDs), which repositories created
+      after 2026-07-15 get; the older repo:owner/name form would not match.
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+
+  # ---------------------------------------------------------------- what GitHub assumes
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: todue-relay-github-deploy-role
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: OnlyThisRepositoryOnMainMayAssume
+            Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOidcProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Ref GitHubSubject
+      Policies:
+        - PolicyName: deploy-app-stack
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ChangeOnlyTheAppStack
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:GetTemplateSummary
+                Resource:
+                  - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AppStackName}/*
+                  - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:changeSet/*/*
+              - Sid: UseTheSamTransform
+                Effect: Allow
+                Action: cloudformation:CreateChangeSet
+                Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31
+              - Sid: FindSamsBucket
+                Effect: Allow
+                Action: cloudformation:DescribeStacks
+                Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/aws-sam-cli-managed-default/*
+              - Sid: UploadThePackageToSamsBucket
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::aws-sam-cli-managed-default-samclisourcebucket-*/*
+              - Sid: LocateSamsBucket
+                Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource: !Sub arn:${AWS::Partition}:s3:::aws-sam-cli-managed-default-samclisourcebucket-*
+              - Sid: HandOnlyTheCloudFormationRole
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt CfnRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: cloudformation.amazonaws.com
+              - Sid: SmokeTestTheFunction
+                Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AppName}-pipeline
+
+  # ---------------------------------------------------- what CloudFormation uses to apply it
+  CfnRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: todue-relay-cfn-deploy-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: OnlyCloudFormationForTheAppStack
+            Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AppStackName}/*
+      Policies:
+        - PolicyName: manage-app-stack-resources
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: TheFunction
+                Effect: Allow
+                Action:
+                  - lambda:CreateFunction
+                  - lambda:DeleteFunction
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - lambda:PutFunctionEventInvokeConfig
+                  - lambda:UpdateFunctionEventInvokeConfig
+                  - lambda:GetFunctionEventInvokeConfig
+                  - lambda:DeleteFunctionEventInvokeConfig
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                  - lambda:ListTags
+                Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AppName}-pipeline
+              - Sid: ReadTheUploadedPackage
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::aws-sam-cli-managed-default-samclisourcebucket-*/*
+              - Sid: TheTwoAppRoles
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:UpdateAssumeRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:TagRole
+                  - iam:UntagRole
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${AppName}-pipeline-role
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${AppName}-scheduler-role
+              - Sid: PassThoseRolesOnlyToTheirServices
+                Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${AppName}-pipeline-role
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${AppName}-scheduler-role
+                Condition:
+                  StringEquals:
+                    iam:PassedToService:
+                      - lambda.amazonaws.com
+                      - scheduler.amazonaws.com
+              - Sid: TheLogGroup
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:PutRetentionPolicy
+                  - logs:DeleteRetentionPolicy
+                  - logs:TagResource
+                  - logs:UntagResource
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AppName}-pipeline:*
+              - Sid: FindLogGroups
+                Effect: Allow
+                Action: logs:DescribeLogGroups
+                Resource: "*"
+              - Sid: TheSchedule
+                Effect: Allow
+                Action:
+                  - scheduler:CreateSchedule
+                  - scheduler:UpdateSchedule
+                  - scheduler:DeleteSchedule
+                  - scheduler:GetSchedule
+                Resource: !Sub arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/${AppName}-hourly
+              - Sid: TheTwoAlarms
+                Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:TagResource
+                  - cloudwatch:UntagResource
+                  - cloudwatch:ListTagsForResource
+                Resource: !Sub arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${AppName}-*
+              - Sid: ReadAlarms
+                Effect: Allow
+                Action: cloudwatch:DescribeAlarms
+                Resource: "*"
+              - Sid: TheAlertTopic
+                Effect: Allow
+                Action:
+                  - sns:CreateTopic
+                  - sns:DeleteTopic
+                  - sns:GetTopicAttributes
+                  - sns:SetTopicAttributes
+                  - sns:Subscribe
+                  - sns:Unsubscribe
+                  - sns:ListSubscriptionsByTopic
+                  - sns:TagResource
+                  - sns:UntagResource
+                Resource: !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${AppName}-alerts
+
+Outputs:
+  DeployRoleArn:
+    Description: Store as the GitHub repository secret AWS_DEPLOY_ROLE_ARN.
+    Value: !GetAtt DeployRole.Arn
+  CfnRoleArn:
+    Description: Store as the GitHub repository secret AWS_CFN_ROLE_ARN.
+    Value: !GetAtt CfnRole.Arn
