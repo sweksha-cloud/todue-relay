@@ -201,7 +201,7 @@ TEST_DATABASE_URL=postgresql+psycopg://postgres:test@localhost:55432/testdb \
   python -m pytest tests/ -v
 ```
 
-211 tests across 15 files, covering date and timezone parsing, pre-filter
+250 tests across 17 files (plus 55 for the Gmail add-on), covering date and timezone parsing, pre-filter
 scoring, LLM response validation (including 429 handling), Calendar event
 construction (including recurrence), duplicate-deadline matching, the idempotency
 claim logic and retry cap, the daily call budget and dry-run mode (driving the
@@ -299,6 +299,7 @@ backend/
     db/                         # models, sessions, idempotency + audit (Postgres)
     metrics.py                  # run history, filter pass rate, usage vs. quota
     main.py, view_helpers.py    # FastAPI dashboard
+    addon_app.py, addon_api.py, addon_auth.py  # the add-on's own authenticated API (not the dashboard)
     templates/                  # dashboard HTML (Jinja2 + htmx)
     config.py                   # every setting, read from the environment
   scripts/
@@ -308,7 +309,8 @@ backend/
   requirements.txt              # full app (pipeline + dashboard)
   requirements-lambda.txt       # pipeline-only, for the Lambda package
   requirements-dev.txt
-  tests/                        # 211 tests, run against real Postgres
+  tests/                        # 250 tests, run against real Postgres
+addon/                          # Gmail add-on (Apps Script, TypeScript): a read-only home card
 docs/
   design-decisions.md           # 23 decisions: what else was considered, and the evidence
 SCALING.md                      # how I'd extend it to multiple users (a design exercise)
@@ -336,5 +338,6 @@ Known limitations:
 - **Single-user by design.** It reads one Gmail account. See [SCALING.md](SCALING.md) for how I'd
   extend this to multiple users.
 
-Not built: Google Tasks integration for dateless items, a Gmail add-on, and a queue-based
-worker (deferred until the simple version has more real use).
+Not built: Google Tasks integration for dateless items and a queue-based worker (deferred until
+the simple version has more real use). A Gmail add-on, a read-only home card over an authenticated
+API, is written and tested in [`addon/`](addon/README.md) but not yet installed in a real Gmail.

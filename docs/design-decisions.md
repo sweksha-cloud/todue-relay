@@ -227,6 +227,35 @@ been given permission to use it. AWS's error named the missing permission exactl
 statement, and the second run succeeded (tests 42 s, deploy 1 m 37 s, dry-run smoke test returning
 HTTP 200). Rolling back is `git revert` and a push.
 
+### 24. A Gmail add-on that holds no decisions
+A second screen for daily use: a side-panel card in Gmail showing what needs review, what is coming
+up and the action items. The htmx dashboard stays; this reads the same data.
+**Why the API is its own app.** An add-on runs in Apps Script on Google's servers, so it cannot call
+a laptop's `localhost`; the API needs a public HTTPS address. The dashboard has no login, so the
+add-on's routes are a separate tiny app (`addon_app.py`) that contains nothing else, with the
+interactive docs off. Giving it a public address cannot expose the dashboard.
+**Who may call it.** Each request carries the Google identity token of the signed-in user. The API
+verifies the signature, expiry, issuer and audience (a token minted for a different app is rejected),
+requires a Google-verified email, and allows exactly one address. With either setting empty it refuses
+everything. Rejections reveal nothing about why.
+**Where the logic lives.** Apps Script can only be seen in Gmail and is awkward to debug, so the
+add-on decides nothing. What counts as "needs review" or "upcoming", and how a deadline is worded,
+live in the API in tested Python. The add-on's own logic is plain TypeScript with Google's services
+injected, and only the widget layout is left to a manual checklist.
+**Evidence.** 39 backend tests use real RS256 tokens verified against a fake key endpoint; 55 add-on
+tests cover the logic, every way the API call can fail, the card layout against a recording fake of
+Google's card builder, and the real bundle run in a sandbox that stands in for Apps Script. Deliberately
+breaking the audience, email and verified-email checks, and separately the login header, the "more"
+note and a global entry point, was each caught by the test meant for it. A bundle-level test earned its
+place by covering what module tests cannot: Apps Script has no module system, so the entry points must
+be attached to the global object.
+**Alternatives.** A hosted React front end gives more front-end signal and is planned separately;
+a browser extension works in one browser and cannot run in the background; an Apps Script-only version
+would mean rewriting the pipeline in JavaScript.
+**Status, stated plainly:** written and tested, not yet installed in a real Gmail, so the manifest and
+layout are unproven against Google until the first install.
+
+
 ---
 
 ## Scaling to other users (a plan; not built)
