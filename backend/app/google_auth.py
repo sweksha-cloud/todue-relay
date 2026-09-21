@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -18,6 +19,18 @@ from app.db.session import engine, get_session
 logger = logging.getLogger(__name__)
 
 OAUTH_TOKEN_KEY = "google"
+
+REAUTH_HINT = (
+    "Google's refresh token has expired or was revoked. While the OAuth app is in 'Testing' "
+    "status Google expires refresh tokens after 7 days. Re-authorize from your laptop "
+    "(it opens a browser): cd backend && python -m scripts.reauth_google"
+)
+
+
+class GoogleReauthRequired(RuntimeError):
+    """The stored refresh token no longer works, so a human has to sign in again. Not
+    retryable by the pipeline itself: it shows up as a failed run, and the message says how to fix it.
+    """
 
 
 def _load_cached_token_json() -> str | None:
@@ -60,11 +73,31 @@ def _save_token(creds: Credentials) -> None:
         logger.warning("Could not write the local token mirror at %s; the database copy is saved", GMAIL_TOKEN_PATH)
 
 
+def reauthorize_google() -> Credentials:
+    """Run the interactive consent flow (opens a browser), ignoring any stored token, and
+    persist the new token to the database and the local mirror. This is what to run when the
+    stored refresh token has expired; the database copy is the one Lambda and Actions read.
+    """
+    if not GMAIL_CLIENT_SECRET_PATH.exists():
+        raise FileNotFoundError(
+            f"Missing OAuth client secret at {GMAIL_CLIENT_SECRET_PATH}. "
+            "Download it from Google Cloud Console (OAuth client, Desktop app "
+            "type) and save it there."
+        )
+    flow = InstalledAppFlow.from_client_secrets_file(str(GMAIL_CLIENT_SECRET_PATH), GOOGLE_SCOPES)
+    creds = flow.run_local_server(port=0)
+    _save_token(creds)
+    return creds
+
+
 def get_google_credentials() -> Credentials:
     """Return valid credentials covering GOOGLE_SCOPES, refreshing or
     running the interactive consent flow as needed, and persisting the
     result to the database (so it survives on any compute target) and a
     local file (dev convenience/mirror only).
+
+    A refresh token that Google rejects (expired or revoked) raises GoogleReauthRequired
+    with the fix in its message, instead of a bare RefreshError.
     """
     creds = None
     cached = _load_cached_token_json()
@@ -73,19 +106,12 @@ def get_google_credentials() -> Credentials:
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+            except RefreshError as e:
+                raise GoogleReauthRequired(f"{REAUTH_HINT} (Google said: {e})") from e
+            _save_token(creds)
         else:
-            if not GMAIL_CLIENT_SECRET_PATH.exists():
-                raise FileNotFoundError(
-                    f"Missing OAuth client secret at {GMAIL_CLIENT_SECRET_PATH}. "
-                    "Download it from Google Cloud Console (OAuth client, Desktop app "
-                    "type) and save it there."
-                )
-            flow = InstalledAppFlow.from_client_secrets_file(
-                str(GMAIL_CLIENT_SECRET_PATH), GOOGLE_SCOPES
-            )
-            creds = flow.run_local_server(port=0)
-
-        _save_token(creds)
+            creds = reauthorize_google()
 
     return creds

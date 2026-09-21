@@ -6,6 +6,9 @@ is stubbed, since this is about ordering and failure isolation, not SQL.
 
 from types import SimpleNamespace
 
+import pytest
+from google.auth.exceptions import RefreshError
+
 from app import google_auth
 
 
@@ -76,3 +79,74 @@ def test_save_token_db_saved_before_mirror_is_attempted(monkeypatch):
     google_auth._save_token(_FakeCreds())
 
     assert order == ["db", "mirror"]
+
+
+class _FakeStoredCreds:
+    """A stored token that has expired but still has a refresh token."""
+
+    valid = False
+    expired = True
+    refresh_token = "r"
+
+    def __init__(self, refresh_error=None):
+        self.refresh_error = refresh_error
+        self.refreshed = False
+
+    def refresh(self, request):
+        if self.refresh_error:
+            raise self.refresh_error
+        self.refreshed = True
+
+
+def _stub_stored_token(monkeypatch, creds):
+    monkeypatch.setattr(google_auth, "_load_cached_token_json", lambda: "{}")
+    monkeypatch.setattr(google_auth.Credentials, "from_authorized_user_info", lambda info, scopes: creds)
+
+
+class TestExpiredRefreshToken:
+    def test_a_rejected_refresh_token_raises_an_error_that_says_how_to_fix_it(self, monkeypatch):
+        _stub_stored_token(monkeypatch, _FakeStoredCreds(RefreshError("invalid_grant: Token has been expired or revoked.")))
+
+        with pytest.raises(google_auth.GoogleReauthRequired) as exc:
+            google_auth.get_google_credentials()
+
+        assert "python -m scripts.reauth_google" in str(exc.value)
+        assert "invalid_grant" in str(exc.value)  # Google's own reason is kept
+
+    def test_a_working_refresh_token_is_refreshed_and_saved(self, monkeypatch):
+        creds = _FakeStoredCreds()
+        _stub_stored_token(monkeypatch, creds)
+        saved = []
+        monkeypatch.setattr(google_auth, "_save_token", lambda c: saved.append(c))
+
+        assert google_auth.get_google_credentials() is creds
+        assert creds.refreshed and saved == [creds]
+
+
+class TestReauthorize:
+    def test_runs_the_consent_flow_and_saves_the_new_token(self, monkeypatch, tmp_path):
+        secret = tmp_path / "client_secret.json"
+        secret.write_text("{}")
+        monkeypatch.setattr(google_auth, "GMAIL_CLIENT_SECRET_PATH", secret)
+        new_creds = object()
+        flow = SimpleNamespace(run_local_server=lambda port: new_creds)
+        monkeypatch.setattr(google_auth.InstalledAppFlow, "from_client_secrets_file", lambda path, scopes: flow)
+        saved = []
+        monkeypatch.setattr(google_auth, "_save_token", lambda c: saved.append(c))
+
+        assert google_auth.reauthorize_google() is new_creds
+        assert saved == [new_creds]
+
+    def test_no_stored_token_starts_the_consent_flow(self, monkeypatch):
+        monkeypatch.setattr(google_auth, "_load_cached_token_json", lambda: None)
+        started = []
+        monkeypatch.setattr(google_auth, "reauthorize_google", lambda: started.append(True) or "fresh")
+
+        assert google_auth.get_google_credentials() == "fresh"
+        assert started == [True]
+
+    def test_a_missing_client_secret_says_where_to_get_it(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(google_auth, "GMAIL_CLIENT_SECRET_PATH", tmp_path / "nope.json")
+
+        with pytest.raises(FileNotFoundError, match="client secret"):
+            google_auth.reauthorize_google()
