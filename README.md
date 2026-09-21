@@ -240,8 +240,9 @@ flowchart LR
 ```
 
 - **Least privilege.** The function's execution role can write one log group and read
-  one secret. A separate scheduler role can only invoke the function. The policy
-  templates are in `aws/iam/`, and were checked with IAM Access Analyzer.
+  one secret. A separate scheduler role can only invoke the function. Both roles are
+  defined in `aws/template.yaml`, and their policies were checked with IAM Access Analyzer
+  before first use.
 - **Failure containment.** No automatic retries (a retry would spend scarce Gemini
   quota) and a queued event is dropped after 60 seconds. A CloudWatch alarm emails on
   any error, and a second alarm fires if the function hasn't run for about 3 hours.
@@ -273,9 +274,8 @@ plan is to move the schedule back to GitHub Actions before the free plan ends in
   pipeline.yml                  # manual / fallback pipeline run (the schedule is on AWS)
   tests.yml                     # CI: the test suite on every push
 aws/
-  template.yaml                 # SAM template: Lambda, schedule, roles, alarms
+  template.yaml                 # SAM template: Lambda, schedule, IAM roles, alarms
   build_lambda.sh               # builds the Lambda zip (Docker)
-  iam/                          # IAM policy templates for the Lambda and scheduler roles
 backend/
   app/
     pipeline.py                 # orchestrates fetch > filter > extract > route > track
