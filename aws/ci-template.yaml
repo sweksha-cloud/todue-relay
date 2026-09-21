@@ -133,6 +133,12 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
+              # The SAM transform runs under THIS role's credentials while CloudFormation builds
+              # the change set, so it needs the permission too, not only the role GitHub assumes.
+              - Sid: UseTheSamTransform
+                Effect: Allow
+                Action: cloudformation:CreateChangeSet
+                Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31
               - Sid: TheFunction
                 Effect: Allow
                 Action:
@@ -164,6 +170,8 @@ Resources:
                   - iam:PutRolePolicy
                   - iam:DeleteRolePolicy
                   - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
                   - iam:TagRole
                   - iam:UntagRole
                 Resource:
