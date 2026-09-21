@@ -211,14 +211,13 @@ every push via `.github/workflows/tests.yml`, with a Postgres service container.
 
 **Live: AWS Lambda + EventBridge Scheduler** (since 2026-09-20). An EventBridge
 Scheduler schedule (`cron(0 * * * ? *)`: every hour, on the hour, UTC) invokes the
-Lambda `todue-relay-pipeline` (Python 3.14, arm64, 1024 MB, 15-minute timeout, no VPC).
+Lambda `todue-relay-sam-pipeline` (Python 3.14, arm64, 1024 MB, 15-minute timeout, no VPC).
 `backend/lambda_handler.py` runs the same `run_pipeline`, reads its Gemini key and
 database URL from AWS Secrets Manager, and accepts `{"dry_run": true}` for quota-free
 checks. `aws/build_lambda.sh` packages it inside AWS's own Lambda Python image
-(about 37 MB zipped, inside the 50 MB direct-upload limit). Deploying is currently a
-manual `aws lambda update-function-code`; there is no automated deploy yet. `aws/template.yaml`
-describes the same resources as a SAM template; it is deployed as a separate stack with its
-schedule off until the live setup is moved onto it.
+(about 37 MB zipped, inside the 50 MB direct-upload limit). The Lambda, schedule, roles and alarms are
+defined in `aws/template.yaml` (AWS SAM, stack `todue-relay-sam`). Deploying is manual: build the zip,
+then run `sam deploy` from `aws/`; there is no automated deploy yet.
 
 - **Least privilege.** The function's execution role can write one log group and read
   one secret. A separate scheduler role can only invoke the function. The policy

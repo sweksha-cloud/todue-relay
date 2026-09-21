@@ -11,9 +11,9 @@ Description: >
 # Build the zip first (needs Docker):  aws/build_lambda.sh
 # Deploy (from aws):
 #   sam deploy --parameter-overrides AlertEmail=you@example.com
-# The stack is created with the schedule DISABLED. Turn it on by redeploying with
-# ScheduleState=ENABLED, and only after the older, hand-built schedule is disabled:
-# two schedulers would double-spend the Gemini quota (20 calls a day).
+# The schedule is ENABLED by default, so a plain `sam deploy` keeps the live schedule running.
+# To stand up a copy of this stack next to another live one, pass ScheduleState=DISABLED: two
+# enabled schedulers would double-spend the Gemini quota (20 calls a day).
 
 Parameters:
   AppName:
@@ -31,9 +31,9 @@ Parameters:
     Description: Where alarm emails go. Passed at deploy time so the address is not committed.
   ScheduleState:
     Type: String
-    Default: DISABLED
+    Default: ENABLED
     AllowedValues: [ENABLED, DISABLED]
-    Description: Whether the hourly schedule fires. Leave DISABLED until the old schedule is off.
+    Description: Whether the hourly schedule fires. Pass DISABLED when running a second copy of this stack, so two schedules never run together.
 
 Conditions:
   ScheduleIsOn: !Equals [!Ref ScheduleState, ENABLED]
