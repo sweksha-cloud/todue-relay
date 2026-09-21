@@ -1,5 +1,5 @@
 """Step 6/7: the FastAPI app that both serves the API and renders the
-dashboard directly as HTML (see claude/tradeoffs/frontend-choice.md for
+dashboard directly as HTML (see docs/design-decisions.md, decision 14 for
 why plain server pages + htmx instead of a separate React app).
 """
 
@@ -98,14 +98,14 @@ def dashboard(
 def check_waiting(request: Request):
     """On-demand "how many emails are waiting" — the dashboard's button for
     the same read-only check as `python -m scripts.run_pipeline --dry-run`
-    (claude/tradeoffs/dry-run-mode.md). ALWAYS a dry run, hardcoded: it reads
+    (docs/design-decisions.md, decision 13). ALWAYS a dry run, hardcoded: it reads
     Gmail and the database, makes no Gemini call, claims nothing, and writes
     nothing, so clicking it can never spend quota or change pipeline state.
     (tests/test_dashboard.py pins that dry_run=True is the only way it's called.)
 
     POST, not GET, so a link prefetcher or crawler can't trigger a Gmail read.
     Unauthenticated like the rest of the dashboard — fine while local-only; it
-    must be protected before any public hosting (see claude/tradeoffs/security-review.md).
+    must be protected before any public hosting (see docs/design-decisions.md, decision 22).
     A failure is rendered as a message, not raised: htmx doesn't swap 4xx/5xx.
     """
     try:
@@ -270,7 +270,7 @@ def remove_email(request: Request, email_id: str, db: Session = Depends(get_db))
 def approve_email(request: Request, email_id: str, db: Session = Depends(get_db)):
     """Low-confidence 'needs review' checkmark: create the Calendar event
     the pipeline held back on, per the confidence-routing decision
-    (claude/tradeoffs/ — auto-create high, queue low for review).
+    (docs/design-decisions.md, decision 9: auto-create high, queue low for review).
     """
     row = db.get(ProcessedEmail, email_id)
     if row is None:

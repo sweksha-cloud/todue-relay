@@ -147,7 +147,7 @@ def find_duplicate_deadline(
     session: Session, event_name: str, exclude_email_id: str, same_day: "date | None" = None
 ) -> ProcessedEmail | None:
     """Look for an already-tracked, still-live deadline with a
-    similar-sounding event name (claude/tradeoffs/duplicate-deadline-detection.md).
+    similar-sounding event name (docs/design-decisions.md, decision 5).
 
     Cheap heuristic on purpose: normalized-name similarity via difflib, no
     embeddings/LLM call. Only matches against rows that still have a live
@@ -204,7 +204,7 @@ def find_duplicate_action_item(
 ) -> ProcessedEmail | None:
     """Look for an already-tracked needs_reply/unclear action item with a
     similar-sounding name — the dateless counterpart to
-    find_duplicate_deadline (claude/post-prod/duplicate-deadline-detection.md).
+    find_duplicate_deadline (docs/design-decisions.md, decision 5).
 
     No date to restrict the search by, so this always searches every
     tracked action item, unbounded — same "cheap at this project's scale"
@@ -249,7 +249,7 @@ def mark_superseded(session: Session, old_email_id: str, new_email_id: str) -> N
     """The OLD side of a detected deadline change: flag it stale and point
     at the row that replaced it, without altering its own historical
     extraction data (the audit trail stays intact — see
-    claude/tradeoffs/does-this-need-a-database.md).
+    docs/design-decisions.md, decision 1).
     """
     row = session.get(ProcessedEmail, old_email_id)
     if row is None:

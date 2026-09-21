@@ -31,7 +31,7 @@ def build_event_body(
 
     recurrence_rule (an RRULE value with no "RRULE:" prefix, e.g.
     "FREQ=MONTHLY;BYMONTHDAY=1") turns the event into a true recurring
-    series instead of a one-off — see claude/post-prod/recurring-events.md.
+    series instead of a one-off — see docs/design-decisions.md, decision 7.
     """
     if has_time:
         tz = detect_local_timezone()

@@ -23,7 +23,7 @@ GMAIL_TOKEN_PATH = Path(
     os.getenv("GMAIL_TOKEN_PATH", CREDENTIALS_DIR / "gmail_token.json")
 )
 
-# Pre-filter aggressiveness — see claude/tradeoffs/pre-filter-aggressiveness.md for the reasoning.
+# Pre-filter aggressiveness — see docs/design-decisions.md, decision 8 for the reasoning.
 FILTER_LEVEL = os.getenv("FILTER_LEVEL", "moderate")
 
 # Extraction LLM: Gemini. Key from https://aistudio.google.com — not committed.
@@ -44,7 +44,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 # GitHub Actions logs show a single Gemini extraction takes ~1s, so 3
 # minutes is still 6-10x the realistic worst-case per-email time, but
 # recovers from a crash 5x faster than the original 15-minute guess.
-# See claude/tradeoffs/stale-claim-minutes.md.
+# See docs/design-decisions.md, decision 2.
 STALE_CLAIM_MINUTES = int(os.getenv("STALE_CLAIM_MINUTES", "3"))
 
 # Single-flight guard (repository.try_start_run, called by pipeline.run_pipeline):
@@ -90,18 +90,18 @@ MAX_EMAILS_PER_RUN = int(os.getenv("MAX_EMAILS_PER_RUN", "50"))
 # against gaps in execution (a crash, an outage, a missed restart), not
 # "how far back to normally look." A window equal to the cadence would
 # mean any downtime longer than that permanently loses emails — see
-# claude/tradeoffs/fetch-window.md for the full reasoning. Decided 2026-09-14.
+# docs/design-decisions.md, decision 11 for the full reasoning. Decided 2026-09-14.
 FETCH_WINDOW_DAYS = int(os.getenv("FETCH_WINDOW_DAYS", "2"))
 
 # Plausibility bounds for a parsed deadline. Decided 2026-09-14 — see
-# claude/tradeoffs/stale-implausible-date-handling.md. A date failing this
+# docs/design-decisions.md, decision 10. A date failing this
 # check never gets silently dropped: it's always routed to "needs review"
 # with a distinct "implausible" flag (see ProcessedEmail.is_implausible_date),
 # never auto-rejected.
 PLAUSIBLE_MAX_PAST_DAYS = int(os.getenv("PLAUSIBLE_MAX_PAST_DAYS", "3"))
 PLAUSIBLE_MAX_FUTURE_DAYS = int(os.getenv("PLAUSIBLE_MAX_FUTURE_DAYS", "365"))
 
-# Duplicate-deadline matching (claude/tradeoffs/duplicate-deadline-detection.md,
+# Duplicate-deadline matching (docs/design-decisions.md, decision 5,
 # decided 2026-09-15): two extractions are treated as the same underlying
 # deadline if their normalized event names are at least this similar
 # (difflib.SequenceMatcher ratio, 0-1). Placeholder, not yet tuned against
@@ -132,7 +132,7 @@ FILTER_ANOMALY_MIN_SAMPLE_SIZE = int(os.getenv("FILTER_ANOMALY_MIN_SAMPLE_SIZE",
 # monthly cap. Limits are per project AND per model: anything else using the
 # same project/model (AI Studio playground, another script) spends this same
 # allowance and is invisible to this pipeline's own count.
-# See claude/tradeoffs/gemini-quota-tracking.md.
+# See docs/design-decisions.md, decision 12.
 GEMINI_DAILY_QUOTA = int(os.getenv("GEMINI_DAILY_QUOTA", "20"))
 
 # Per-day call budget guard (2026-09-18, pipeline.run_pipeline): a run stops

@@ -266,7 +266,7 @@ class TestDailyBudgetGuard:
 
 class TestDryRun:
     """run_pipeline(dry_run=True): report what a real run would do, spending
-    nothing and writing nothing (claude/tradeoffs/dry-run-mode.md).
+    nothing and writing nothing (docs/design-decisions.md, decision 13).
     """
 
     def _snapshot(self, db_session):

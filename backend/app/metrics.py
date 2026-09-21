@@ -16,7 +16,7 @@ Known precision gaps, accepted rather than solved with new schema:
   confirmed in AI Studio) is per project and model, so anything else using
   the same project (AI Studio playground, another script) spends it too and
   is invisible here — on 2026-09-18 Google showed 20/20 used while this
-  count read 15. See claude/tradeoffs/gemini-quota-tracking.md.
+  count read 15. See docs/design-decisions.md, decision 12.
 
 LLM usage is NOT subject to the updated_at problem: it's summed from
 pipeline_runs (see daily_llm_usage), whose started_at is written once.
@@ -58,7 +58,7 @@ def _filter_pass_rate(run: PipelineRun) -> float | None:
 def _bucket_completions_by_run(runs: list[PipelineRun], rows: list[ProcessedEmail]) -> dict[int, list[ProcessedEmail]]:
     """Which run completed each row — approximated by whether the row's
     completed_at falls inside that run's [started_at, finished_at] window.
-    No direct run_id column exists (see claude/tradeoffs/observability-metrics.md
+    No direct run_id column exists (see docs/design-decisions.md, decision 16
     decision 1); reliable here because only one run ever executes at a
     time in this pipeline, so the windows never overlap.
     """

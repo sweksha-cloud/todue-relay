@@ -5,7 +5,7 @@ Usage (from backend/, with .venv active):
     python -m scripts.run_pipeline --dry-run   # report only: spends nothing, writes nothing
 
 --dry-run exists because checking the pipeline shouldn't cost real quota (the
-free tier is 20 Gemini calls/day). See claude/tradeoffs/dry-run-mode.md.
+free tier is 20 Gemini calls/day). See docs/design-decisions.md, decision 13.
 """
 
 from __future__ import annotations

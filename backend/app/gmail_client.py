@@ -60,7 +60,7 @@ def _has_calendar_invite(payload: dict) -> bool:
     setting) add it to the calendar directly — independent of, and before,
     anything this pipeline does. Extracting a deadline/action item from one
     of these too would create a second, redundant entry for something
-    already handled — see claude/tradeoffs/calendar-invite-emails.md.
+    already handled — see docs/design-decisions.md, decision 6.
     """
     if payload.get("mimeType") in _CALENDAR_INVITE_MIME_TYPES:
         return True

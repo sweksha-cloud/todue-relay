@@ -9,8 +9,8 @@ completed/skipped email is never re-sent to the LLM) and the audit trail
 repository.mark_superseded when a newer email is recognized as a changed
 version of the same deadline (its Calendar event is updated in place and the
 new row records duplicate_of_email_id / date_changed_from — see
-claude/tradeoffs/deadline-changed-policy.md and
-claude/tradeoffs/duplicate-deadline-detection.md).
+docs/design-decisions.md, decision 5 and
+docs/design-decisions.md, decision 5).
 """
 
 from __future__ import annotations
@@ -72,14 +72,14 @@ class ProcessedEmail(Base):
     extraction_has_time: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # A single email describing a repeating obligation ("rent due the 1st
     # of every month") -> a true recurring Calendar event (RRULE), not a
-    # one-off. See claude/post-prod/recurring-events.md (decided 2026-09-15).
+    # one-off. See docs/design-decisions.md, decision 7 (decided 2026-09-15).
     extraction_is_recurring: Mapped[bool] = mapped_column(Boolean, default=False)
     extraction_recurrence_rule: Mapped[str | None] = mapped_column(String, nullable=True)
     # Failed the plausibility check (too far past/future to trust) —
     # distinct from plain low confidence, so the dashboard can show "this
     # date looks wrong" separately from "this is just uncertain." Never
     # causes auto-rejection, only this flag on an otherwise-normal
-    # needs-review row. See claude/tradeoffs/stale-implausible-date-handling.md.
+    # needs-review row. See docs/design-decisions.md, decision 10.
     is_implausible_date: Mapped[bool] = mapped_column(Boolean, default=False)
 
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -91,8 +91,8 @@ class ProcessedEmail(Base):
     user_correction: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     # Deadline-changed / duplicate detection (decided 2026-09-15, see
-    # claude/tradeoffs/duplicate-deadline-detection.md and
-    # claude/tradeoffs/deadline-changed-policy.md). Set on the OLD row once
+    # docs/design-decisions.md, decision 5 and
+    # docs/design-decisions.md, decision 5). Set on the OLD row once
     # a newer email is recognized as referring to the same deadline.
     is_stale: Mapped[bool] = mapped_column(default=False)
     superseded_by_email_id: Mapped[str | None] = mapped_column(
@@ -152,7 +152,7 @@ class PipelineRun(Base):
     # the daily Gemini call budget was spent (pipeline.run_pipeline). Left
     # untouched for a later run, so they leave no other trace — this counter is
     # the only record that mail is waiting. Added 2026-09-18; on the live Neon
-    # DB via ALTER TABLE (no migration tool), see claude/tradeoffs/daily-call-budget.md.
+    # DB via ALTER TABLE (no migration tool), see docs/design-decisions.md, decision 12.
     emails_deferred: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 

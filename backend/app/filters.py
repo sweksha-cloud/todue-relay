@@ -86,7 +86,7 @@ def is_deadline_candidate(subject: str, body_text: str, level: str = FILTER_LEVE
 
 
 # Unrelated to the Step 1 pre-filter above — used by duplicate-deadline
-# detection (claude/tradeoffs/duplicate-deadline-detection.md) to decide
+# detection (docs/design-decisions.md, decision 5) to decide
 # whether to search across ALL tracked deadlines (not just the same day)
 # for a possible reschedule. Known, accepted gap: a reschedule that just
 # restates a new date with none of these words won't be caught this way —

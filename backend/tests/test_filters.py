@@ -62,7 +62,7 @@ class TestContainsRescheduleLanguage:
         assert contains_reschedule_language("Update", "New due date: April 25.") is True
 
     def test_plain_restated_date_is_not_detected(self):
-        """Known, accepted gap (claude/tradeoffs/duplicate-deadline-detection.md):
+        """Known, accepted gap (docs/design-decisions.md, decision 5):
         a reschedule that doesn't use any signal words isn't caught here —
         it's caught downstream by creating a visible (not silent) second entry."""
         assert contains_reschedule_language("Assignment 3", "Assignment 3 due April 25.") is False

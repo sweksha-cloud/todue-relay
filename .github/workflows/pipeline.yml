@@ -7,7 +7,7 @@ on:
   # schedule back to Actions (e.g. when the AWS free plan ends), FIRST disable the AWS
   # schedule, THEN restore:
   #   schedule:
-  #     - cron: "0 * * * *"   # every hour, on the hour; see claude/tradeoffs/cron-interval.md
+  #     - cron: "0 * * * *"   # every hour, on the hour; see docs/design-decisions.md, decision 17
   workflow_dispatch: {}  # manual trigger, per the original spec's requirement
 
 # Least privilege: this job only reads its own code and calls external

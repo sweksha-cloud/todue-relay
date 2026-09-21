@@ -8,13 +8,13 @@ Failure isolation: one email's exception is caught and recorded via
 mark_failed without aborting the batch — a bad LLM response, a transient
 API error, or a malformed date on one email doesn't stop the rest.
 
-Confidence routing (claude/tradeoffs/confidence-routing.md): high
+Confidence routing (docs/design-decisions.md, decision 9): high
 confidence + a plausible date auto-creates the Calendar event; everything
 else (low confidence, or a deadline that fails the plausibility check)
 lands as "needs review" for the dashboard's approve/decline checkmarks.
 Plausibility bounds (PLAUSIBLE_MAX_PAST_DAYS / PLAUSIBLE_MAX_FUTURE_DAYS in
 app/config.py) were decided 2026-09-14 — see
-claude/tradeoffs/stale-implausible-date-handling.md.
+docs/design-decisions.md, decision 10.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def run_pipeline(*, dry_run: bool = False) -> dict:
     """Process up to MAX_EMAILS_PER_RUN recent emails end-to-end. Returns a
     summary dict; always records a PipelineRun row, success or failure.
 
-    Daily call budget (claude/tradeoffs/gemini-quota-tracking.md): once
+    Daily call budget (docs/design-decisions.md, decision 12): once
     today's Gemini calls reach GEMINI_DAILY_QUOTA - GEMINI_DAILY_RESERVE, no
     further email is claimed this run — it's "deferred", left untouched so a
     later run (after the midnight-Pacific reset) picks it up while it's still
@@ -57,7 +57,7 @@ def run_pipeline(*, dry_run: bool = False) -> dict:
     "skipped_run": True and touching nothing, if another run is already in progress.
     Dry runs bypass this: they write nothing and spend nothing, so they can overlap.
 
-    dry_run (claude/tradeoffs/dry-run-mode.md): report what a real run WOULD
+    dry_run (docs/design-decisions.md, decision 13): report what a real run WOULD
     do — which emails it would send to Gemini, defer, skip, or recover —
     without spending quota or changing anything. Gmail and the database are
     only read; nothing is claimed, no Gemini call is made, no Calendar event
@@ -248,7 +248,7 @@ def _claim_and_process(session, email, *, over_budget: bool = False, dry_run: bo
         # independent of this pipeline. Extracting a deadline/action item
         # from it too would create a redundant second entry for something
         # already handled — see gmail_client._has_calendar_invite and
-        # claude/tradeoffs/calendar-invite-emails.md. Never even claimed,
+        # docs/design-decisions.md, decision 6. Never even claimed,
         # same cheapest-possible-skip pattern as the pre-filter below.
         # Kept out of "filtered_out" below on purpose: a batch of invites
         # arriving is an unrelated category, not a pre-filter regression
@@ -296,7 +296,7 @@ def _process_one(session, email) -> None:
             # last email about scheduling?") folds into the existing
             # action item instead of becoming a second dashboard entry —
             # the dateless counterpart to deadline duplicate detection, see
-            # claude/post-prod/duplicate-deadline-detection.md.
+            # docs/design-decisions.md, decision 5.
             match = repository.find_duplicate_action_item(session, extraction.event_name, email.id)
 
         if match is not None:
@@ -318,7 +318,7 @@ def _process_one(session, email) -> None:
         service = calendar_client.get_calendar_service()
 
         # Check already-tracked deadlines before creating a new event —
-        # claude/tradeoffs/duplicate-deadline-detection.md. Two tiers:
+        # docs/design-decisions.md, decision 5. Two tiers:
         # 1. Always check the same day (catches a plain repeat reminder,
         #    regardless of wording).
         # 2. Only if the email itself signals a reschedule, also search
@@ -358,7 +358,7 @@ def _process_one(session, email) -> None:
         elif match is not None:
             # Same event, different date and/or time — the deadline moved.
             # Update the existing Calendar event in place
-            # (claude/tradeoffs/deadline-changed-policy.md) and flag it on
+            # (docs/design-decisions.md, decision 5) and flag it on
             # the dashboard so the change is never silent.
             calendar_client.update_event(
                 service,
