@@ -13,6 +13,7 @@ export interface EmailView {
   on_calendar: boolean;
   is_implausible_date: boolean;
   vote: "correct" | "incorrect" | null;
+  actions: string[]; // what the person may do now; the API decides, the card only draws them
 }
 
 export interface RunView {
@@ -29,4 +30,10 @@ export interface Summary {
   upcoming: EmailView[];
   action_items: EmailView[];
   latest_run: RunView | null;
+}
+
+export interface ActionResult {
+  ok: boolean;
+  message: string; // what to tell the person, e.g. "Added to your calendar"
+  email: EmailView;
 }

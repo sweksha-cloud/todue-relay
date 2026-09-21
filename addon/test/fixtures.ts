@@ -1,4 +1,4 @@
-import type { EmailView, Summary } from "../src/types";
+import type { ActionResult, EmailView, RunView, Summary } from "../src/types";
 
 export function email(overrides: Partial<EmailView> = {}): EmailView {
   return {
@@ -13,8 +13,13 @@ export function email(overrides: Partial<EmailView> = {}): EmailView {
     on_calendar: true,
     is_implausible_date: false,
     vote: null,
+    actions: [],
     ...overrides,
   };
+}
+
+export function run(overrides: Partial<RunView> = {}): RunView {
+  return { status: "success", started_text: "Mon Sep 21, 6:00 AM", fetched: 24, processed: 3, failed: 0, ...overrides };
 }
 
 export function summary(overrides: Partial<Summary> = {}): Summary {
@@ -26,4 +31,8 @@ export function summary(overrides: Partial<Summary> = {}): Summary {
     latest_run: null,
     ...overrides,
   };
+}
+
+export function actionResult(overrides: Partial<ActionResult> = {}): ActionResult {
+  return { ok: true, message: "Added to your calendar", email: email(), ...overrides };
 }

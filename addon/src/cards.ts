@@ -24,6 +24,14 @@ export function renderHome(model: HomeModel): Card {
       if (item.tag) widget.setTopLabel(item.tag);
       if (item.subtitle) widget.setBottomLabel(item.subtitle);
       section.addWidget(widget);
+      if (item.buttons.length > 0) {
+        const set = CardService.newButtonSet();
+        for (const b of item.buttons) {
+          const action = CardService.newAction().setFunctionName("onAction").setParameters({ emailId: b.emailId, action: b.action });
+          set.addButton(CardService.newTextButton().setText(b.label).setOnClickAction(action));
+        }
+        section.addWidget(set);
+      }
     }
     if (s.more) section.addWidget(CardService.newTextParagraph().setText(s.more));
     card.addSection(section);

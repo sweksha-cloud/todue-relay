@@ -40,3 +40,11 @@ export function called(node: unknown, method: string): boolean {
   if (!(node instanceof Recorder)) return false;
   return node.calls.some(([name, args]) => name === method || args.some((a) => called(a, method)));
 }
+
+/** The parameter objects passed to setParameters anywhere inside the node, in order. */
+export function paramsOf(node: unknown): Array<Record<string, string>> {
+  if (!(node instanceof Recorder)) return [];
+  return node.calls.flatMap(([name, args]) =>
+    name === "setParameters" ? [args[0] as Record<string, string>] : args.flatMap(paramsOf),
+  );
+}

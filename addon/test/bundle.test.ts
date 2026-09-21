@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { called, fakeCardService, texts } from "./fakes";
-import { email, summary } from "./fixtures";
+import { actionResult, email, summary } from "./fixtures";
 
 let code = "";
 beforeAll(() => {
@@ -16,7 +16,7 @@ beforeAll(() => {
 });
 
 interface World {
-  fetches: Array<{ url: string; headers: Record<string, string> }>;
+  fetches: Array<{ url: string; method: string; headers: Record<string, string>; payload?: string }>;
   logs: string[];
 }
 
@@ -28,9 +28,9 @@ function load(opts: { status?: number; body?: unknown; props?: Record<string, st
     ScriptApp: { getIdentityToken: () => (opts.token === undefined ? "the-token" : opts.token) },
     PropertiesService: { getScriptProperties: () => ({ getProperty: (n: string) => props[n] ?? null }) },
     UrlFetchApp: {
-      fetch: (url: string, options: { headers: Record<string, string> }) => {
-        world.fetches.push({ url, headers: options.headers });
-        return { getResponseCode: () => opts.status ?? 200, getContentText: () => JSON.stringify(opts.body ?? summary()) };
+      fetch: (url: string, options: { method?: string; headers: Record<string, string>; payload?: string }) => {
+        world.fetches.push({ url, method: options.method ?? "get", headers: options.headers, payload: options.payload });
+        return { getResponseCode: () => opts.status ?? 200, getContentText: () => (typeof opts.body === "string" ? opts.body : JSON.stringify(opts.body ?? summary())) };
       },
     },
     Logger: { log: (line: string) => world.logs.push(line) },
@@ -43,10 +43,10 @@ function load(opts: { status?: number; body?: unknown; props?: Record<string, st
   return {
     world,
     /** Calls a global function the way Gmail would. Fails clearly if the bundle did not expose it. */
-    run: (name: string): unknown => {
+    run: (name: string, event?: unknown): unknown => {
       const fn = sandbox[name];
       if (typeof fn !== "function") throw new Error(`${name} is not exposed as a global function`);
-      return fn();
+      return fn(event);
     },
     has: (name: string): boolean => typeof sandbox[name] === "function",
   };
@@ -62,6 +62,7 @@ describe("the bundled script, as Gmail runs it", () => {
 
     expect(has("onHomepage")).toBe(true);
     expect(has("onRefresh")).toBe(true);
+    expect(has("onAction")).toBe(true);
     expect(has("debugToken")).toBe(true);
   });
 
@@ -75,7 +76,7 @@ describe("the bundled script, as Gmail runs it", () => {
     const card = run("onHomepage");
 
     expect(world.fetches).toEqual([
-      { url: "https://api.example.com/api/addon/summary", headers: { Authorization: "Bearer the-token" } },
+      { url: "https://api.example.com/api/addon/summary", method: "get", headers: { Authorization: "Bearer the-token" }, payload: undefined },
     ]);
     expect(texts(card)).toEqual(expect.arrayContaining(["Workshop signup", "Fri Sep 25", "Needs review (1)"]));
   });
@@ -118,5 +119,59 @@ describe("the bundled script, as Gmail runs it", () => {
     run("debugToken");
 
     expect(world.logs.join("\n")).toContain("openid");
+  });
+});
+
+describe("pressing a button, as Gmail runs it", () => {
+  const press = (action: string, emailId = "r1") => ({ parameters: { emailId, action } });
+
+  it("POSTs the action to the API, tells the person what happened, and redraws the card", () => {
+    const { run, world } = load({ body: actionResult({ message: "Added to your calendar" }) });
+
+    const response = run("onAction", press("approve"));
+
+    expect(world.fetches[0]).toMatchObject({ url: "https://api.example.com/api/addon/emails/r1/approve", method: "post", headers: { Authorization: "Bearer the-token" } });
+    expect(texts(response)).toContain("Added to your calendar");
+    expect(called(response, "setNotification")).toBe(true);
+    expect(called(response, "updateCard")).toBe(true);
+  });
+
+  it("sends a vote's verdict as JSON", () => {
+    const { run, world } = load({ body: actionResult({ message: "Marked correct" }) });
+
+    run("onAction", press("vote_correct", "c1"));
+
+    expect(world.fetches[0]).toMatchObject({ url: "https://api.example.com/api/addon/emails/c1/vote", method: "post", payload: '{"vote":"correct"}' });
+  });
+
+  it("tells the person the API's own reason when it refuses, and leaves the card alone", () => {
+    const { run } = load({ status: 400, body: '{"detail":"Not an approvable item"}' });
+
+    const response = run("onAction", press("approve"));
+
+    expect(texts(response)).toContain("Not an approvable item");
+    expect(called(response, "updateCard")).toBe(false);
+  });
+
+  it("does not call the API for a press it does not recognise", () => {
+    const { run, world } = load();
+
+    const response = run("onAction", { parameters: { emailId: "r1", action: "explode" } });
+
+    expect(world.fetches).toHaveLength(0);
+    expect(texts(response)).toContain("That button was not recognised.");
+  });
+
+  it("copes with a press that carries no parameters at all", () => {
+    const { run, world } = load();
+
+    expect(texts(run("onAction", {}))).toContain("That button was not recognised.");
+    expect(world.fetches).toHaveLength(0);
+  });
+
+  it("tells the person when the API cannot be reached, instead of failing silently", () => {
+    const { run } = load({ props: {} });
+
+    expect(texts(run("onAction", press("remove")))).toContain("API_BASE_URL is not set.");
   });
 });

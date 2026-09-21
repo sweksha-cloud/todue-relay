@@ -4,10 +4,25 @@
 
 import type { EmailView, RunView, Summary } from "./types";
 
+export const ACTION_LABELS: Record<string, string> = {
+  approve: "Add to calendar",
+  decline: "Don't add",
+  vote_correct: "Correct",
+  vote_incorrect: "Incorrect",
+  remove: "Remove",
+};
+
+export interface ItemButton {
+  label: string;
+  emailId: string;
+  action: string;
+}
+
 export interface HomeItem {
   title: string;
   subtitle: string | null;
   tag: string | null;
+  buttons: ItemButton[];
 }
 
 export interface HomeSection {
@@ -35,7 +50,10 @@ export function itemFor(e: EmailView): HomeItem {
   let tag: string | null = null;
   if (e.is_implausible_date) tag = "Date looks odd";
   else if (e.confidence === "low") tag = "Low confidence";
-  return { title, subtitle: e.deadline_text, tag };
+  else if (e.vote) tag = e.vote === "correct" ? "Marked correct" : "Marked incorrect";
+  // Only the actions the API offered, in its order; one it offers that this version does not know is skipped.
+  const buttons = e.actions.filter((a) => a in ACTION_LABELS).map((a) => ({ label: ACTION_LABELS[a] as string, emailId: e.email_id, action: a }));
+  return { title, subtitle: e.deadline_text, tag, buttons };
 }
 
 export function moreText(total: number, shown: number): string | null {
@@ -95,4 +113,19 @@ export function errorModel(kind: ErrorKind, detail: string): ErrorModel {
     case "parse":
       return { message: detail, hint: "The API's response was not what this add-on expects. The two may be out of step." };
   }
+}
+
+const KNOWN_ACTIONS = new Set(Object.keys(ACTION_LABELS));
+
+export interface ActionRequest {
+  emailId: string;
+  action: string;
+}
+
+/** Reads a button press's parameters (Apps Script passes them as strings), or null if they are not ours. */
+export function parseActionParameters(parameters: unknown): ActionRequest | null {
+  if (typeof parameters !== "object" || parameters === null) return null;
+  const { emailId, action } = parameters as Record<string, unknown>;
+  if (typeof emailId !== "string" || !emailId || typeof action !== "string" || !KNOWN_ACTIONS.has(action)) return null;
+  return { emailId, action };
 }

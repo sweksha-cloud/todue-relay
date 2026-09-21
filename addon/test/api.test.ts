@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ApiError, fetchSummary, type ApiDeps } from "../src/api";
-import { summary } from "./fixtures";
+import { ACTION_ROUTES, ApiError, fetchSummary, runAction, type ApiDeps, type FetchOptions } from "../src/api";
+import { actionResult, summary } from "./fixtures";
 
 function deps(overrides: Partial<ApiDeps> = {}): ApiDeps {
   return {
@@ -26,11 +26,11 @@ describe("fetchSummary", () => {
   });
 
   it("calls the summary endpoint with the identity token as a bearer token", () => {
-    let seen: { url: string; headers: Record<string, string> } | undefined;
-    fetchSummary(deps({ fetch: (url, headers) => ((seen = { url, headers }), { status: 200, body: "{}" }) }));
+    let seen: { url: string; options: FetchOptions } | undefined;
+    fetchSummary(deps({ fetch: (url, options) => ((seen = { url, options }), { status: 200, body: "{}" }) }));
 
     expect(seen?.url).toBe("https://api.example.com/api/addon/summary");
-    expect(seen?.headers).toEqual({ Authorization: "Bearer the-token" });
+    expect(seen?.options).toEqual({ method: "GET", headers: { Authorization: "Bearer the-token" } });
   });
 
   it("copes with a trailing slash on the configured address", () => {
@@ -91,3 +91,86 @@ describe("fetchSummary", () => {
     }
   });
 });
+
+function post(d: Partial<ApiDeps> = {}) {
+  const seen: Array<{ url: string; options: FetchOptions }> = [];
+  const all = deps({ fetch: (url, options) => (seen.push({ url, options }), { status: 200, body: JSON.stringify(actionResult()) }), ...d });
+  return { all, seen };
+}
+
+describe("runAction", () => {
+  it("POSTs approve, decline and remove to their own endpoints, with the login header and no choice to make", () => {
+    for (const action of ["approve", "decline", "remove"]) {
+      const { all, seen } = post();
+
+      runAction(all, "abc123", action);
+
+      expect(seen[0]?.url).toBe(`https://api.example.com/api/addon/emails/abc123/${action}`);
+      expect(seen[0]?.options.method).toBe("POST");
+      expect(seen[0]?.options.headers.Authorization).toBe("Bearer the-token");
+      expect(seen[0]?.options.payload).toBe("{}");
+    }
+  });
+
+  it("sends a vote to the vote endpoint with the verdict in the body", () => {
+    const { all, seen } = post();
+
+    runAction(all, "abc123", "vote_correct");
+    runAction(all, "abc123", "vote_incorrect");
+
+    expect(seen.map((s) => s.url)).toEqual(Array(2).fill("https://api.example.com/api/addon/emails/abc123/vote"));
+    expect(seen.map((s) => s.options.payload)).toEqual(['{"vote":"correct"}', '{"vote":"incorrect"}']);
+    expect(seen[0]?.options.headers["Content-Type"]).toBe("application/json");
+  });
+
+  it("returns the API's message and the updated item", () => {
+    const { all } = post();
+
+    expect(runAction(all, "e1", "approve").message).toBe("Added to your calendar");
+  });
+
+  it("escapes an id so it cannot change the path", () => {
+    const { all, seen } = post();
+
+    runAction(all, "a/b?c", "remove");
+
+    expect(seen[0]?.url).toBe("https://api.example.com/api/addon/emails/a%2Fb%3Fc/remove");
+  });
+
+  it("shows the API's own reason when it refuses an action (400)", () => {
+    const err = failureOf(() => runAction(post({ fetch: () => ({ status: 400, body: '{"detail":"Not an approvable item"}' }) }).all, "e1", "approve"));
+
+    expect(err.message).toBe("Not an approvable item");
+    expect(err.status).toBe(400);
+  });
+
+  it("copes with an error body that is not JSON", () => {
+    const err = failureOf(() => runAction(post({ fetch: () => ({ status: 404, body: "<html>" }) }).all, "e1", "remove"));
+
+    expect(err.message).toBe("The API answered HTTP 404.");
+  });
+
+  it("refuses an action it does not know, without calling the API", () => {
+    const { all, seen } = post();
+
+    expect(failureOf(() => runAction(all, "e1", "delete_everything")).kind).toBe("parse");
+    expect(seen).toHaveLength(0);
+  });
+
+  it("knows a route for every action the labels offer", () => {
+    expect(Object.keys(ACTION_ROUTES).sort()).toEqual(["approve", "decline", "remove", "vote_correct", "vote_incorrect"]);
+  });
+
+  it("treats a refused account the same way as for the summary", () => {
+    expect(failureOf(() => runAction(post({ fetch: () => ({ status: 403, body: "" }) }).all, "e1", "remove")).kind).toBe("auth");
+  });
+});
+
+function failureOf(fn: () => unknown): ApiError {
+  try {
+    fn();
+  } catch (e) {
+    return e as ApiError;
+  }
+  throw new Error("expected a failure");
+}

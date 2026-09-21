@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildHomeModel, errorModel, itemFor, moreText, runLine, truncate } from "../src/format";
+import { ACTION_LABELS, buildHomeModel, errorModel, itemFor, moreText, parseActionParameters, runLine, truncate } from "../src/format";
 import { email, summary } from "./fixtures";
 
 describe("truncate", () => {
@@ -89,4 +89,42 @@ describe("errorModel", () => {
   it("points an auth failure at the two settings that must match", () => {
     expect(errorModel("auth", "x").hint).toContain("ADDON_OAUTH_CLIENT_ID");
   });
+});
+
+describe("item buttons", () => {
+  it("draws exactly the buttons the API offered, in its order, with friendly labels", () => {
+    const item = itemFor(email({ email_id: "r1", actions: ["approve", "decline"] }));
+
+    expect(item.buttons).toEqual([
+      { label: "Add to calendar", emailId: "r1", action: "approve" },
+      { label: "Don't add", emailId: "r1", action: "decline" },
+    ]);
+  });
+  it("has none when the API offered none", () => expect(itemFor(email({ actions: [] })).buttons).toEqual([]));
+  it("skips an action this version does not know, instead of drawing a dead button", () => {
+    expect(itemFor(email({ actions: ["snooze", "remove"] })).buttons.map((b) => b.action)).toEqual(["remove"]);
+  });
+  it("has a label for every action the API can offer", () => {
+    expect(Object.keys(ACTION_LABELS).sort()).toEqual(["approve", "decline", "remove", "vote_correct", "vote_incorrect"]);
+  });
+});
+
+describe("the verdict tag", () => {
+  it("shows a verdict already given", () => {
+    expect(itemFor(email({ vote: "correct" })).tag).toBe("Marked correct");
+    expect(itemFor(email({ vote: "incorrect" })).tag).toBe("Marked incorrect");
+  });
+  it("still puts a warning ahead of a verdict", () => expect(itemFor(email({ vote: "correct", confidence: "low" })).tag).toBe("Low confidence"));
+});
+
+describe("parseActionParameters", () => {
+  it("reads a button press", () => expect(parseActionParameters({ emailId: "e1", action: "remove" })).toEqual({ emailId: "e1", action: "remove" }));
+  it.each([
+    ["nothing", undefined],
+    ["a string", "remove"],
+    ["a missing id", { action: "remove" }],
+    ["an empty id", { emailId: "", action: "remove" }],
+    ["an unknown action", { emailId: "e1", action: "explode" }],
+    ["a non-string id", { emailId: 5, action: "remove" }],
+  ])("rejects %s", (_name, value) => expect(parseActionParameters(value)).toBeNull());
 });

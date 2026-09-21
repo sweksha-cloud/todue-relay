@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { renderError, renderHome } from "../src/cards";
 import { buildHomeModel, errorModel } from "../src/format";
-import { count, fakeCardService, texts, type Recorder } from "./fakes";
+import { count, fakeCardService, paramsOf, texts, type Recorder } from "./fakes";
 import { email, summary } from "./fixtures";
 
 beforeEach(() => {
@@ -62,6 +62,33 @@ describe("renderHome", () => {
 
     expect(all).toContain("Refresh");
     expect(all).toContain("onRefresh");
+  });
+});
+
+describe("renderHome buttons", () => {
+  const withActions = (actions: string[]) =>
+    renderHome(buildHomeModel(summary({ counts: { needs_review: 1, upcoming: 0, action_items: 0 }, needs_review: [email({ email_id: "r1", actions })] })));
+
+  it("draws a button for each offered action, in one row under the item", () => {
+    const card = withActions(["approve", "decline"]);
+
+    expect(texts(card)).toEqual(expect.arrayContaining(["Add to calendar", "Don't add"]));
+    expect(count(card, "newButtonSet")).toBe(1);
+    expect(count(card, "newTextButton")).toBe(3); // the two item buttons, plus Refresh in the footer
+  });
+
+  it("wires each button to onAction with the item's id and the action", () => {
+    const card = withActions(["approve", "decline"]);
+
+    expect(paramsOf(card)).toEqual([
+      { emailId: "r1", action: "approve" },
+      { emailId: "r1", action: "decline" },
+    ]);
+    expect(texts(card)).toContain("onAction");
+  });
+
+  it("draws no button row for an item with nothing to do", () => {
+    expect(count(withActions([]), "newButtonSet")).toBe(0);
   });
 });
 
