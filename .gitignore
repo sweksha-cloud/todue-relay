@@ -19,3 +19,8 @@ backend/db_dumps/
 
 # Lambda deployment zip output (aws/build_lambda.sh)
 aws/build/
+
+# Gmail add-on (addon/)
+addon/node_modules/
+addon/dist/
+addon/.clasp.json
