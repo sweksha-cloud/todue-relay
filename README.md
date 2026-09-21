@@ -9,7 +9,8 @@ dashboard instead of being guessed at.
 
 **Built with:** Python, FastAPI, Jinja2 + htmx, PostgreSQL (SQLAlchemy 2),
 Google Gemini, the Gmail and Calendar APIs, AWS Lambda + EventBridge Scheduler,
-GitHub Actions (CI). The scheduled job runs on AWS; see [Deployment](#deployment).
+GitHub Actions (CI, and CD through GitHub OIDC). The scheduled job runs on AWS; see
+[Deployment](#deployment).
 
 ## How it works
 
@@ -200,7 +201,7 @@ TEST_DATABASE_URL=postgresql+psycopg://postgres:test@localhost:55432/testdb \
   python -m pytest tests/ -v
 ```
 
-196 tests across 15 files, covering date and timezone parsing, pre-filter
+211 tests across 15 files, covering date and timezone parsing, pre-filter
 scoring, LLM response validation (including 429 handling), Calendar event
 construction (including recurrence), duplicate-deadline matching, the idempotency
 claim logic and retry cap, the daily call budget and dry-run mode (driving the
@@ -219,8 +220,11 @@ Lambda `todue-relay-sam-pipeline` (Python 3.14, arm64, 1024 MB, 15-minute timeou
 database URL from AWS Secrets Manager, and accepts `{"dry_run": true}` for quota-free
 checks. `aws/build_lambda.sh` packages it inside AWS's own Lambda Python image
 (about 37 MB zipped, inside the 50 MB direct-upload limit). The Lambda, schedule, roles and alarms are
-defined in `aws/template.yaml` (AWS SAM, stack `todue-relay-sam`). Deploying is manual: build the zip,
-then run `sam deploy` from `aws/`; there is no automated deploy yet.
+defined in `aws/template.yaml` (AWS SAM, stack `todue-relay-sam`). Deploys are automated: a push to `main`
+that touches the Lambda's code or template runs the tests, builds the package, deploys the stack
+with SAM and dry-run tests the function. GitHub authenticates to AWS with a short-lived OIDC token
+(no AWS keys are stored), through two narrowly scoped roles defined in `aws/ci-template.yaml`.
+`sam deploy` from `aws/` still works by hand.
 
 ```mermaid
 flowchart LR
@@ -276,8 +280,10 @@ plan is to move the schedule back to GitHub Actions before the free plan ends in
 .github/workflows/
   pipeline.yml                  # manual / fallback pipeline run (the schedule is on AWS)
   tests.yml                     # CI: the test suite on every push
+  deploy.yml                    # CD: tests, then SAM deploy to AWS through GitHub OIDC
 aws/
   template.yaml                 # SAM template: Lambda, schedule, IAM roles, alarms
+  ci-template.yaml              # the GitHub OIDC provider and the two deploy roles
   build_lambda.sh               # builds the Lambda zip (Docker)
 backend/
   app/
@@ -302,7 +308,10 @@ backend/
   requirements.txt              # full app (pipeline + dashboard)
   requirements-lambda.txt       # pipeline-only, for the Lambda package
   requirements-dev.txt
-  tests/                        # 196 tests, run against real Postgres
+  tests/                        # 211 tests, run against real Postgres
+docs/
+  design-decisions.md           # 23 decisions: what else was considered, and the evidence
+SCALING.md                      # how I'd extend it to multiple users (a design exercise)
 ```
 
 ## Status and limitations
@@ -320,11 +329,12 @@ Known limitations:
 - **Schema changes are manual** (no migration tool; see [Setup](#3-postgres)).
 - **The free Gemini tier caps throughput** at 20 extractions a day, so a large
   backlog is worked off over several days.
-- **Lambda deploys are manual** (no automated CD yet), and the AWS hosting is
-  time-boxed to the free plan (see [Deployment](#deployment)).
+- **The AWS hosting is time-boxed** to the free plan, which ends in March 2027
+  (see [Deployment](#deployment)).
 - **Google refresh tokens expire every 7 days** while the OAuth app is in Testing
   status.
+- **Single-user by design.** It reads one Gmail account. See [SCALING.md](SCALING.md) for how I'd
+  extend this to multiple users.
 
-Not built: automated deploys to AWS, Google Tasks integration for dateless items, a Gmail
-add-on, and a queue-based worker (deferred until the simple version has more
-real use).
+Not built: Google Tasks integration for dateless items, a Gmail add-on, and a queue-based
+worker (deferred until the simple version has more real use).

@@ -208,82 +208,37 @@ A dedicated pass, with every finding fixed and verified or explicitly accepted:
 - **Accepted, with reasoning:** the dashboard has no authentication, which is why it runs locally
   and must not be hosted until it has some.
 
+### 23. Automated deploys through GitHub OIDC, with no stored AWS keys
+A push to `main` that touches the Lambda's code or template runs the tests and then deploys the SAM
+stack: build the arm64 package on a native runner, assume an AWS role, `sam deploy`, then dry-run
+the function and fail the run unless it returns cleanly. GitHub proves its identity with a
+short-lived OIDC token, so no AWS access key exists anywhere to leak. The AWS side trusts only this
+repository on `main`, matched on GitHub's immutable subject format (the older `repo:owner/name`
+form would silently fail on a repository this new).
+**Least privilege, in two roles.** The role GitHub can assume may only ask CloudFormation to update
+one stack, upload to SAM's bucket, invoke the function for the smoke test, and hand the second role
+to CloudFormation. It cannot create a Lambda, a role or a schedule itself. The second role is what
+CloudFormation uses while applying the stack, limited to the named resources. Both live in a
+separate stack (`aws/ci-template.yaml`) applied by hand, so the role GitHub assumes is not something
+a deploy can rewrite. Both policies pass IAM Access Analyzer with no findings.
+**Evidence, including the miss.** The first run authenticated and uploaded the package, then failed:
+the SAM transform runs under the CloudFormation role's own credentials, and only the GitHub role had
+been given permission to use it. AWS's error named the missing permission exactly; the fix was one
+statement, and the second run succeeded (tests 42 s, deploy 1 m 37 s, dry-run smoke test returning
+HTTP 200). Rolling back is `git revert` and a push.
+
 ---
 
 ## Scaling to other users (a plan; not built)
 
-Today the system is single-user by design: one Google account, one calendar, one OAuth token, one
-Gemini key, configuration in environment variables. This is how it would grow to serve other
-people, in the order I would do it. It is a plan, not a claim about what exists.
-
-### Two constraints that engineering cannot remove
-
-1. **Google's restricted scope.** Reading mail uses `gmail.readonly`, a *restricted* scope. An app
-   that reads it and stores the data on a server must pass Google's OAuth verification and an
-   annual third-party security assessment (CASA), which costs from a few hundred to a few
-   thousand dollars a year. Until then an unverified app is capped at 100 users, shows an
-   "unverified app" warning, and while in Testing status its refresh tokens expire every 7 days.
-   Sign-in itself is different: `openid`, `email` and `profile` are non-sensitive and need no
-   verification at any scale.
-2. **The LLM's free tier is shared.** Gemini's free tier allows 20 requests a day *per project*,
-   so a second user would halve the first user's budget. Serving others needs a paid pool with
-   per-user limits, or each user bringing their own key.
-
-### What would change, in dependency order
-
-1. **Identity.** "Sign in with Google" (identity scopes only), server-side sessions in HttpOnly,
-   SameSite cookies, and CSRF protection on every state-changing endpoint (Remove, Reschedule,
-   Schedule), since those buttons write to a real calendar.
-2. **A tenant-aware data model.** A `users` table and a `user_id` on `processed_emails`,
-   `pipeline_runs`, corrections and OAuth tokens. The atomic claim key becomes `(user, email)`.
-   Every query goes through a repository function that *requires* a user, so there is no way to
-   write a global query by accident; Postgres row-level security would be a second layer. Tests
-   must prove isolation, including guessing another user's row IDs in a URL.
-3. **Real migrations.** Schema changes are manual `ALTER TABLE` today, which is fine for one
-   person. With many users they need versioned, reversible migrations (Alembic), and existing rows
-   backfilled to the owner.
-4. **Per-user credentials.** OAuth refresh tokens and any bring-your-own Gemini keys encrypted at
-   rest with envelope encryption (a KMS-managed key), never logged, with a revoke-and-delete flow.
-   Expired or revoked consent becomes a normal state: an in-app "reconnect" banner and an email,
-   not a failed run that only the owner sees.
-5. **Pipeline fan-out.** Today one scheduled Lambda processes one mailbox. A dispatcher would
-   enqueue one job per active user (SQS), a worker would process one user's mailbox, and failures
-   would be isolated per user with a dead-letter queue. The existing single-flight guard
-   generalizes by keying the advisory lock on the user; a global concurrency cap protects the LLM's
-   rate limits.
-6. **Quota and cost control.** A per-user daily budget, a shared rate limiter across workers,
-   usage metering per user, a kill switch, and a cost alarm. The budget guard that exists now
-   counts one user's finished runs; it becomes a per-user counter plus a global one.
-7. **Privacy.** Store as little as possible (subjects and extracted fields, not full bodies), a
-   retention period with automatic deletion, an export-and-delete-my-account endpoint that also
-   revokes the Google grant, no email content in logs, a published privacy policy, and compliance
-   with Google's Limited Use rules.
-8. **Per-user settings.** `CALENDAR_TIMEZONE`, filter level and fetch window move from environment
-   variables to a settings row per user; an onboarding flow connects Google and picks a calendar.
-9. **API and front end.** A versioned JSON API with a generated typed client, and a separate
-   front end (React and TypeScript) on a static host, replacing the server-rendered pages.
-10. **Security hardening.** Rate limiting on the API, a permission boundary on the CI deploy role,
-    dependency scanning in CI, and a review of every endpoint for authorization, not only
-    authentication.
-11. **Operations.** Structured logs keyed by a hashed user ID, aggregate alerts (share of users
-    whose last run failed), a staging environment, and a load test with fake mailboxes.
-12. **Infrastructure limits.** Neon's free tier caps connections, storage and compute; a new AWS
-    account's Lambda concurrency limit is 10 (raisable on request); and the AWS Free plan ends in
-    March 2027, so a real service needs a paid account or another host.
-
-### What would stay the same
-The atomic per-email claim, confidence routing, the dry-run mode, the single-flight guard (now per
-user), the pre-filter, the alarms, and infrastructure as code with SAM. The idempotency and
-safety design was built around one person's mailbox, but nothing in it assumes there is only one.
-
-### A rollout that fits a zero-dollar budget
-1. **A public demo with sample data**, no Google connection, so anyone can try the interface.
-2. **An invite-only beta** of allow-listed testers (up to 100, in Google's Testing status, each
-   re-consenting weekly), which is enough to exercise multi-tenancy for real.
-3. **Self-hosting instructions**, so anyone can run it with their own Google project and keys.
-
-General availability needs Google's verification and security assessment, which is a cost decision
-and not an engineering one.
+ToDue Relay is single-user by design. How I'd extend it to other people is written up in
+[SCALING.md](../SCALING.md) as a design exercise, not a pending roadmap item. The short version:
+two constraints shape everything (Google requires a paid annual security assessment before an app
+that reads Gmail can open to the public, and the LLM's free tier is shared per project), and the
+work is a per-user data model with isolation tests, separate sign-in and Gmail consent, per-user
+fan-out through a queue, per-user quota and encrypted credentials, and a privacy and retention
+policy. The safety design (atomic claims, confidence routing, dry-run, the single-flight guard) stays
+and gains a user dimension.
 
 ---
 
