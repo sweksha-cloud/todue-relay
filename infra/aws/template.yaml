@@ -1,0 +1,220 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  ToDue Relay pipeline on AWS: an hourly EventBridge Scheduler schedule invokes one
+  Lambda function, which reads one secret and writes its own logs. Two CloudWatch alarms
+  email an SNS topic when the pipeline errors or stops running.
+
+# What this file does NOT create: the Secrets Manager secret. It holds the Gemini key and
+# the database URL, so its value never goes in git; the stack only refers to it by name.
+#
+# Build the zip first (needs Docker):  infra/aws/build_lambda.sh
+# Deploy (from infra/aws):
+#   sam deploy --parameter-overrides AlertEmail=you@example.com
+# The stack is created with the schedule DISABLED. Turn it on by redeploying with
+# ScheduleState=ENABLED, and only after the older, hand-built schedule is disabled:
+# two schedulers would double-spend the Gemini quota (20 calls a day).
+
+Parameters:
+  AppName:
+    Type: String
+    Default: todue-relay-sam
+    Description: >
+      Prefix for every resource name. It differs from the hand-built resources
+      (todue-relay-*) so both can exist side by side while this stack is proven.
+  SecretName:
+    Type: String
+    Default: todue-relay/pipeline
+    Description: Name of the existing Secrets Manager secret (GEMINI_API_KEY and DATABASE_URL).
+  AlertEmail:
+    Type: String
+    Description: Where alarm emails go. Passed at deploy time so the address is not committed.
+  ScheduleState:
+    Type: String
+    Default: DISABLED
+    AllowedValues: [ENABLED, DISABLED]
+    Description: Whether the hourly schedule fires. Leave DISABLED until the old schedule is off.
+
+Conditions:
+  ScheduleIsOn: !Equals [!Ref ScheduleState, ENABLED]
+
+Resources:
+  # --- Logs -------------------------------------------------------------------------
+  # Created here (not left for Lambda to create on first run) so retention is set:
+  # a log group Lambda creates itself keeps logs forever.
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AppName}-pipeline
+      RetentionInDays: 30
+
+  # --- The function and its execution role ------------------------------------------
+  # Execution role = what the function may do. Two things only: write its own logs,
+  # read one secret. The secret ARN ends in a hyphen plus six random characters, so the
+  # name is matched with -?????? (six single-character wildcards) instead of a *.
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AppName}-pipeline-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: LambdaServiceMayAssumeThisRole
+            Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: pipeline-permissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteOwnLogs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AppName}-pipeline:*
+              - Sid: ReadThePipelineSecret
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretName}-??????
+
+  PipelineFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AppName}-pipeline
+      # A prebuilt zip (infra/aws/build_lambda.sh builds it inside AWS's own Lambda image so
+      # the compiled wheels match). SAM uploads it as-is; no `sam build` step.
+      CodeUri: build/todue-relay-lambda.zip
+      Handler: lambda_handler.handler
+      Runtime: python3.14
+      Architectures: [arm64]
+      MemorySize: 1024
+      Timeout: 900
+      Role: !GetAtt PipelineRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref LogGroup
+      Environment:
+        Variables:
+          SECRET_ID: !Ref SecretName
+          GEMINI_MODEL: gemini-3.6-flash
+          FILTER_LEVEL: moderate
+          FETCH_WINDOW_DAYS: "2"
+          CALENDAR_TIMEZONE: America/Los_Angeles
+      # Scheduled invocations are asynchronous. No retries: the next hourly run is the
+      # retry, and a retry of a run that timed out would just run twice.
+      EventInvokeConfig:
+        MaximumRetryAttempts: 0
+        MaximumEventAgeInSeconds: 60
+
+  # --- The schedule and its role ----------------------------------------------------
+  # Scheduler role = what lets the schedule start the function (the opposite direction
+  # from the execution role). Only EventBridge Scheduler in this account may assume it,
+  # and it may invoke only this function.
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AppName}-scheduler-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: SchedulerServiceMayAssumeThisRole
+            Effect: Allow
+            Principal: { Service: scheduler.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: invoke-pipeline
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: InvokeOnlyThePipelineFunction
+                Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AppName}-pipeline
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AppName}-pipeline:*
+
+  HourlySchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub ${AppName}-hourly
+      Description: Hourly on the hour, mirroring the old GitHub Actions cron (0 * * * *).
+      ScheduleExpression: cron(0 * * * ? *)
+      ScheduleExpressionTimezone: UTC
+      State: !Ref ScheduleState
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      Target:
+        Arn: !GetAtt PipelineFunction.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+        Input: "{}"
+        RetryPolicy:
+          MaximumRetryAttempts: 0
+          MaximumEventAgeInSeconds: 60
+
+  # --- Alerts -----------------------------------------------------------------------
+  # The email subscription stays "pending" until the link in the confirmation email is
+  # clicked; alarms cannot reach an unconfirmed address.
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${AppName}-alerts
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlertEmail
+
+  # Fires when a run fails or times out. One email on entering ALARM, one on returning to OK.
+  ErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AppName}-pipeline-errors
+      AlarmDescription: !Sub >-
+        ${AppName} pipeline Lambda returned an error or timed out.
+        Check CloudWatch Logs /aws/lambda/${AppName}-pipeline.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - { Name: FunctionName, Value: !Ref PipelineFunction }
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  # Fires when there were no invocations for 3 hours in a row: the schedule itself may have
+  # stopped. Missing data counts as breaching (no invocations means no datapoints). Its
+  # actions are off while the schedule is DISABLED, since silence is expected then.
+  NotRunningAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AppName}-pipeline-not-running
+      AlarmDescription: !Sub >-
+        ${AppName} pipeline Lambda has not been invoked for about 3 hours: the hourly
+        schedule may have stopped. Check EventBridge Scheduler ${AppName}-hourly.
+      Namespace: AWS/Lambda
+      MetricName: Invocations
+      Dimensions:
+        - { Name: FunctionName, Value: !Ref PipelineFunction }
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 3
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      ActionsEnabled: !If [ScheduleIsOn, true, false]
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+Outputs:
+  FunctionName:
+    Value: !Ref PipelineFunction
+  ScheduleName:
+    Value: !Ref HourlySchedule
+  AlertTopicArn:
+    Value: !Ref AlertTopic

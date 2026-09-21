@@ -1,0 +1,11 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "todue-relay-sam"
+region = "us-east-2"
+# SAM keeps the uploaded zip in a bucket it creates and manages itself.
+resolve_s3 = true
+# The template creates two named IAM roles, which AWS makes you acknowledge.
+capabilities = "CAPABILITY_NAMED_IAM"
+# Show the change set and ask before applying it.
+confirm_changeset = true
