@@ -15,21 +15,6 @@ from app.review_actions import ActionError
 from app.schemas import ExtractionResult
 
 
-@pytest.fixture
-def calendar(monkeypatch):
-    """A fake Google Calendar that records what would have been sent to it."""
-    calls = {"created": [], "deleted": []}
-
-    def fake_create(service, **kwargs):
-        calls["created"].append(kwargs)
-        return "new-event-id"
-
-    monkeypatch.setattr(calendar_client, "get_calendar_service", lambda: object())
-    monkeypatch.setattr(calendar_client, "create_event", fake_create)
-    monkeypatch.setattr(calendar_client, "delete_event", lambda service, event_id: calls["deleted"].append(event_id))
-    return calls
-
-
 def _row(db, email_id="e1", subject="Nominations due", *, event_id=None, has_deadline=True, action_type="deadline",
          raw="Sep 24 at 5:00 PM", context="ctx", recurring=None):
     deadline = datetime.now(timezone.utc) + timedelta(days=3) if has_deadline else None

@@ -1,4 +1,4 @@
-"""JSON API for the Gmail add-on: a read-only summary now; the review actions come next.
+"""JSON API for the Gmail add-on: a summary, and the review actions (vote, approve, decline, remove).
 
 Kept thin on purpose. The add-on runs in Apps Script, where code is awkward to test and can only be
 seen in Gmail, so everything that *decides* something (what counts as "needs review", what "upcoming"
@@ -10,14 +10,17 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app import review_actions
 from app.addon_auth import require_owner
 from app.date_utils import to_local
 from app.db import repository
-from app.db.models import ProcessedEmail, RunStatus
+from app.db.models import ActionType, ProcessedEmail, ProcessingStatus, RunStatus
 from app.db.session import get_db
 from app.view_helpers import display_status
 
@@ -40,6 +43,7 @@ class EmailView(BaseModel):
     on_calendar: bool
     is_implausible_date: bool
     vote: str | None  # "correct" | "incorrect" | None
+    actions: list[str]  # what the person may do now: approve, decline, vote_correct, vote_incorrect, remove
 
 
 class RunView(BaseModel):
@@ -76,6 +80,20 @@ def deadline_text(deadline: datetime | None, has_time: bool | None) -> str | Non
     return text
 
 
+def available_actions(row: ProcessedEmail) -> list[str]:
+    """Which review actions make sense for this item right now. Decided here, not in the add-on, so
+    the rule is tested Python and the add-on only draws the buttons it is told about."""
+    if row.calendar_event_id:
+        actions = ["remove"]
+        if row.user_correction is None:  # a verdict is given once, as on the dashboard
+            actions = ["vote_correct", "vote_incorrect", *actions]
+        return actions
+    is_deadline = row.extraction_action_type in (None, ActionType.DEADLINE)
+    if row.status == ProcessingStatus.COMPLETED and is_deadline:  # "needs review"
+        return (["approve"] if row.extraction_deadline_parsed else []) + ["decline"]
+    return []  # action items, skipped, failed and in-progress rows: nothing to do from the card yet
+
+
 def email_view(row: ProcessedEmail) -> EmailView:
     deadline = row.extraction_deadline_parsed
     vote = None if row.user_correction is None else ("correct" if row.user_correction else "incorrect")
@@ -91,6 +109,7 @@ def email_view(row: ProcessedEmail) -> EmailView:
         on_calendar=bool(row.calendar_event_id),
         is_implausible_date=row.is_implausible_date,
         vote=vote,
+        actions=available_actions(row),
     )
 
 
@@ -124,3 +143,46 @@ def summary(db: Session = Depends(get_db)) -> Summary:
         action_items=[email_view(r) for r in repository.list_action_items(db, limit=SUMMARY_LIMIT)],
         latest_run=_run_view(repository.get_latest_run(db)),
     )
+
+
+class VoteBody(BaseModel):
+    vote: Literal["correct", "incorrect"]
+
+
+class ActionResult(BaseModel):
+    ok: bool
+    message: str  # what to tell the person, e.g. "Added to your calendar"
+    email: EmailView
+
+
+def _run(action, message: str, *args) -> ActionResult:
+    try:
+        row = action(*args)
+    except review_actions.ActionError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+    return ActionResult(ok=True, message=message, email=email_view(row))
+
+
+@router.post("/emails/{email_id}/vote", response_model=ActionResult)
+def vote(email_id: str, body: VoteBody, db: Session = Depends(get_db)) -> ActionResult:
+    """A correct / incorrect verdict. Records the vote only; it never touches the calendar."""
+    is_correct = body.vote == "correct"
+    return _run(review_actions.record_vote, f"Marked {body.vote}", db, email_id, is_correct)
+
+
+@router.post("/emails/{email_id}/approve", response_model=ActionResult)
+def approve(email_id: str, db: Session = Depends(get_db)) -> ActionResult:
+    """Create the calendar event the pipeline held back on."""
+    return _run(review_actions.approve, "Added to your calendar", db, email_id)
+
+
+@router.post("/emails/{email_id}/decline", response_model=ActionResult)
+def decline(email_id: str, db: Session = Depends(get_db)) -> ActionResult:
+    """Decline to add a held-back item: skipped for good, no calendar event."""
+    return _run(review_actions.decline, "Won't add this", db, email_id)
+
+
+@router.post("/emails/{email_id}/remove", response_model=ActionResult)
+def remove(email_id: str, db: Session = Depends(get_db)) -> ActionResult:
+    """Delete the item's real calendar event. The row is kept (so it is never re-added) but unlisted."""
+    return _run(review_actions.remove_event, "Removed from your calendar", db, email_id)

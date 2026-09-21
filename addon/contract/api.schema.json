@@ -1,0 +1,357 @@
+{
+  "ActionResult": {
+    "$defs": {
+      "EmailView": {
+        "properties": {
+          "action_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Type"
+          },
+          "actions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Actions",
+            "type": "array"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "deadline_iso": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline Iso"
+          },
+          "deadline_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline Text"
+          },
+          "email_id": {
+            "title": "Email Id",
+            "type": "string"
+          },
+          "event_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Name"
+          },
+          "is_implausible_date": {
+            "title": "Is Implausible Date",
+            "type": "boolean"
+          },
+          "on_calendar": {
+            "title": "On Calendar",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "vote": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vote"
+          }
+        },
+        "required": [
+          "email_id",
+          "subject",
+          "event_name",
+          "status",
+          "confidence",
+          "action_type",
+          "deadline_iso",
+          "deadline_text",
+          "on_calendar",
+          "is_implausible_date",
+          "vote",
+          "actions"
+        ],
+        "title": "EmailView",
+        "type": "object"
+      }
+    },
+    "properties": {
+      "email": {
+        "$ref": "#/$defs/EmailView"
+      },
+      "message": {
+        "title": "Message",
+        "type": "string"
+      },
+      "ok": {
+        "title": "Ok",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "ok",
+      "message",
+      "email"
+    ],
+    "title": "ActionResult",
+    "type": "object"
+  },
+  "Summary": {
+    "$defs": {
+      "Counts": {
+        "properties": {
+          "action_items": {
+            "title": "Action Items",
+            "type": "integer"
+          },
+          "needs_review": {
+            "title": "Needs Review",
+            "type": "integer"
+          },
+          "upcoming": {
+            "title": "Upcoming",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "needs_review",
+          "upcoming",
+          "action_items"
+        ],
+        "title": "Counts",
+        "type": "object"
+      },
+      "EmailView": {
+        "properties": {
+          "action_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Type"
+          },
+          "actions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Actions",
+            "type": "array"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "deadline_iso": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline Iso"
+          },
+          "deadline_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline Text"
+          },
+          "email_id": {
+            "title": "Email Id",
+            "type": "string"
+          },
+          "event_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Name"
+          },
+          "is_implausible_date": {
+            "title": "Is Implausible Date",
+            "type": "boolean"
+          },
+          "on_calendar": {
+            "title": "On Calendar",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "vote": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vote"
+          }
+        },
+        "required": [
+          "email_id",
+          "subject",
+          "event_name",
+          "status",
+          "confidence",
+          "action_type",
+          "deadline_iso",
+          "deadline_text",
+          "on_calendar",
+          "is_implausible_date",
+          "vote",
+          "actions"
+        ],
+        "title": "EmailView",
+        "type": "object"
+      },
+      "RunView": {
+        "properties": {
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "fetched": {
+            "title": "Fetched",
+            "type": "integer"
+          },
+          "processed": {
+            "title": "Processed",
+            "type": "integer"
+          },
+          "started_text": {
+            "title": "Started Text",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "started_text",
+          "fetched",
+          "processed",
+          "failed"
+        ],
+        "title": "RunView",
+        "type": "object"
+      }
+    },
+    "properties": {
+      "action_items": {
+        "items": {
+          "$ref": "#/$defs/EmailView"
+        },
+        "title": "Action Items",
+        "type": "array"
+      },
+      "counts": {
+        "$ref": "#/$defs/Counts"
+      },
+      "latest_run": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/RunView"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "needs_review": {
+        "items": {
+          "$ref": "#/$defs/EmailView"
+        },
+        "title": "Needs Review",
+        "type": "array"
+      },
+      "upcoming": {
+        "items": {
+          "$ref": "#/$defs/EmailView"
+        },
+        "title": "Upcoming",
+        "type": "array"
+      }
+    },
+    "required": [
+      "counts",
+      "needs_review",
+      "upcoming",
+      "action_items",
+      "latest_run"
+    ],
+    "title": "Summary",
+    "type": "object"
+  }
+}

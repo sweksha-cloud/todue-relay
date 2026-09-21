@@ -177,3 +177,40 @@ class TestNothingElseIsExposed:
     @pytest.mark.parametrize("path", ["/", "/metrics", "/docs", "/redoc", "/openapi.json"])
     def test_dashboard_and_docs_routes_do_not_exist_on_this_app(self, client, path):
         assert client.get(path).status_code == 404
+
+
+class TestEveryRouteIsProtected:
+    """Not only the summary: every action that changes the calendar needs the owner's token."""
+
+    WRITES = [("vote", {"json": {"vote": "correct"}}), ("approve", {}), ("decline", {}), ("remove", {})]
+
+    @pytest.mark.parametrize("action,kwargs", WRITES)
+    def test_no_token_means_401(self, client, action, kwargs):
+        assert client.post(f"/api/addon/emails/e1/{action}", **kwargs).status_code == 401
+
+    @pytest.mark.parametrize("action,kwargs", WRITES)
+    def test_someone_elses_valid_google_token_means_403(self, client, action, kwargs):
+        headers = _auth(_token(email="someone-else@example.com"))
+
+        assert client.post(f"/api/addon/emails/e1/{action}", headers=headers, **kwargs).status_code == 403
+
+    def test_a_refused_caller_cannot_delete_a_calendar_event(self, client, db_session, monkeypatch):
+        from app import calendar_client
+        from app.db import repository
+        from app.schemas import ExtractionResult
+
+        deleted = []
+        monkeypatch.setattr(calendar_client, "get_calendar_service", lambda: object())
+        monkeypatch.setattr(calendar_client, "delete_event", lambda service, event_id: deleted.append(event_id))
+        repository.try_claim_email(db_session, "e1", "t", "Rent due")
+        repository.mark_completed(
+            db_session, "e1",
+            ExtractionResult(email_id="e1", event_name="Rent due", deadline_date_raw="in 3 days", deadline_date=None,
+                             source_context="c", confidence="high", action_type="deadline"),
+            calendar_event_id="cal-1",
+        )
+
+        response = client.post("/api/addon/emails/e1/remove", headers=_auth(_token(email="attacker@example.com")))
+
+        assert response.status_code == 403
+        assert deleted == []

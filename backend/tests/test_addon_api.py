@@ -6,13 +6,13 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from app.addon_api import deadline_text
+from app.addon_api import available_actions, deadline_text
 from app.addon_app import app
 from app.addon_auth import require_owner
 from app import date_utils
 from app.date_utils import has_explicit_time
 from app.db import repository
-from app.db.models import RunStatus
+from app.db.models import ProcessedEmail, RunStatus
 from app.db.session import get_db
 from app.schemas import ExtractionResult
 
@@ -185,3 +185,130 @@ class TestDeadlineWording:
 
     def test_no_deadline_gives_no_text(self):
         assert deadline_text(None, None) is None
+
+
+class TestWhichActionsAreOffered:
+    """The API decides what the card may offer, so the add-on only draws the buttons it is told about."""
+
+    def _actions(self, db, email_id):
+        return available_actions(db.get(ProcessedEmail, email_id))
+
+    def test_an_item_needing_review_can_be_added_or_declined(self, db_session):
+        _row(db_session, "r1", "Workshop", event_id=None, confidence="low")
+
+        assert self._actions(db_session, "r1") == ["approve", "decline"]
+
+    def test_an_item_with_no_date_can_only_be_declined_because_there_is_nothing_to_create(self, db_session):
+        repository.try_claim_email(db_session, "nodate", "t", "Vague")
+        repository.mark_completed(
+            db_session, "nodate",
+            ExtractionResult(email_id="nodate", event_name="Vague", deadline_date_raw=None, deadline_date=None,
+                             source_context="c", confidence="low", action_type="deadline"),
+            calendar_event_id=None,
+        )
+
+        assert self._actions(db_session, "nodate") == ["decline"]
+
+    def test_an_event_on_the_calendar_can_be_voted_on_and_removed(self, db_session):
+        _row(db_session, "c1", "Rent due", event_id="cal-1")
+
+        assert self._actions(db_session, "c1") == ["vote_correct", "vote_incorrect", "remove"]
+
+    def test_once_a_verdict_is_given_only_remove_is_left(self, db_session):
+        _row(db_session, "c1", "Rent due", event_id="cal-1")
+        repository.set_correction(db_session, "c1", False)
+
+        assert self._actions(db_session, "c1") == ["remove"]
+
+    def test_action_items_have_no_actions_from_the_card_yet(self, db_session):
+        _row(db_session, "a1", "Reply to advisor", event_id=None, action_type="needs_reply")
+
+        assert self._actions(db_session, "a1") == []
+
+    def test_a_declined_item_offers_nothing(self, db_session):
+        _row(db_session, "r1", "Workshop", event_id=None)
+        repository.mark_skipped(db_session, "r1", "declined by user")
+
+        assert self._actions(db_session, "r1") == []
+
+    def test_the_summary_carries_them(self, client, db_session):
+        _row(db_session, "r1", "Workshop", event_id=None)
+        _row(db_session, "c1", "Rent due", event_id="cal-1")
+
+        body = client.get(URL).json()
+
+        assert body["needs_review"][0]["actions"] == ["approve", "decline"]
+        assert body["upcoming"][0]["actions"] == ["vote_correct", "vote_incorrect", "remove"]
+
+
+class TestTheActionEndpoints:
+    def _post(self, client, email_id, action, **kwargs):
+        return client.post(f"/api/addon/emails/{email_id}/{action}", **kwargs)
+
+    def test_approving_creates_the_event_and_says_so(self, client, db_session, calendar):
+        _row(db_session, "r1", "Workshop signup", event_id=None)
+
+        response = self._post(client, "r1", "approve")
+
+        body = response.json()
+        assert response.status_code == 200 and body["ok"] is True
+        assert body["message"] == "Added to your calendar"
+        assert body["email"]["on_calendar"] is True and body["email"]["status"] == "added"
+        assert len(calendar["created"]) == 1
+
+    def test_declining_skips_it_without_touching_the_calendar(self, client, db_session, calendar):
+        _row(db_session, "r1", "Workshop", event_id=None)
+
+        response = self._post(client, "r1", "decline")
+
+        assert response.json()["message"] == "Won't add this"
+        assert response.json()["email"]["status"] == "skipped"
+        assert calendar == {"created": [], "deleted": []}
+
+    def test_removing_deletes_the_real_event(self, client, db_session, calendar):
+        _row(db_session, "c1", "Rent due", event_id="cal-9")
+
+        response = self._post(client, "c1", "remove")
+
+        assert response.json()["message"] == "Removed from your calendar"
+        assert calendar["deleted"] == ["cal-9"]
+        assert client.get(URL).json()["counts"]["upcoming"] == 0
+
+    @pytest.mark.parametrize("verdict,message,expected", [("correct", "Marked correct", "correct"), ("incorrect", "Marked incorrect", "incorrect")])
+    def test_voting_records_the_verdict_and_never_touches_the_calendar(self, client, db_session, calendar, verdict, message, expected):
+        _row(db_session, "c1", "Rent due", event_id="cal-1")
+
+        response = self._post(client, "c1", "vote", json={"vote": verdict})
+
+        assert response.json()["message"] == message
+        assert response.json()["email"]["vote"] == expected
+        assert response.json()["email"]["actions"] == ["remove"]
+        assert calendar == {"created": [], "deleted": []}
+
+    def test_a_vote_must_be_correct_or_incorrect(self, client, db_session, calendar):
+        _row(db_session, "c1", "Rent due", event_id="cal-1")
+
+        assert self._post(client, "c1", "vote", json={"vote": "maybe"}).status_code == 422
+        assert self._post(client, "c1", "vote", json={}).status_code == 422
+
+    def test_a_refused_action_says_why_and_changes_nothing(self, client, db_session, calendar):
+        _row(db_session, "c1", "Rent due", event_id="cal-1")
+
+        response = self._post(client, "c1", "approve")  # already on the calendar
+
+        assert response.status_code == 400 and response.json()["detail"] == "Not an approvable item"
+        assert calendar["created"] == []
+
+    @pytest.mark.parametrize("action", ["approve", "decline", "remove"])
+    def test_an_unknown_email_is_a_404(self, client, action, calendar):
+        assert self._post(client, "nope", action).status_code == 404
+
+    def test_an_unknown_email_cannot_be_voted_on(self, client, calendar):
+        assert self._post(client, "nope", "vote", json={"vote": "correct"}).status_code == 404
+
+    def test_the_same_action_twice_does_not_act_twice(self, client, db_session, calendar):
+        _row(db_session, "r1", "Workshop", event_id=None)
+        self._post(client, "r1", "approve")
+
+        assert self._post(client, "r1", "approve").status_code == 400
+        assert len(calendar["created"]) == 1

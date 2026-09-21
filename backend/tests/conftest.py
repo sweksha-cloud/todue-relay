@@ -42,3 +42,21 @@ def db_session(engine):
     with engine.begin() as conn:
         for table in reversed(Base.metadata.sorted_tables):
             conn.execute(text(f'TRUNCATE TABLE "{table.name}" CASCADE'))
+
+
+@pytest.fixture
+def calendar(monkeypatch):
+    """A fake Google Calendar that records what would have been sent to it, so a test can check both
+    that an action reached the calendar and that a refused one did not."""
+    from app import calendar_client
+
+    calls = {"created": [], "deleted": []}
+
+    def fake_create(service, **kwargs):
+        calls["created"].append(kwargs)
+        return "new-event-id"
+
+    monkeypatch.setattr(calendar_client, "get_calendar_service", lambda: object())
+    monkeypatch.setattr(calendar_client, "create_event", fake_create)
+    monkeypatch.setattr(calendar_client, "delete_event", lambda service, event_id: calls["deleted"].append(event_id))
+    return calls
