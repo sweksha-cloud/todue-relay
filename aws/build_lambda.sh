@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the AWS Lambda deployment zip: infra/aws/build/todue-relay-lambda.zip
+# Build the AWS Lambda deployment zip: aws/build/todue-relay-lambda.zip
 #
 # Dependencies are installed inside AWS's own Lambda Python image, so the
 # compiled wheels (psycopg, cryptography, pydantic_core) match what Lambda
@@ -7,15 +7,15 @@
 # Needs Docker. Builds nothing in AWS and uploads nothing.
 #
 # Usage (from anywhere):
-#     infra/aws/build_lambda.sh
-#     ARCH=amd64 infra/aws/build_lambda.sh     # for an x86_64 function
+#     aws/build_lambda.sh
+#     ARCH=amd64 aws/build_lambda.sh     # for an x86_64 function
 #
 # ARCH must match the function's "architecture" setting (arm64 or x86_64).
 # Default arm64: native on Apple-silicon Macs, so no slow emulation.
 set -euo pipefail
 
-HERE="$(cd "$(dirname "$0")" && pwd)"            # infra/aws/
-BACKEND="$(cd "$HERE/../../backend" && pwd)"     # the code being packaged
+HERE="$(cd "$(dirname "$0")" && pwd)"            # aws/
+BACKEND="$(cd "$HERE/../backend" && pwd)"     # the code being packaged
 
 PY_VERSION="${PY_VERSION:-3.14}"
 ARCH="${ARCH:-arm64}"

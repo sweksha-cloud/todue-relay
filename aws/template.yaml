@@ -8,8 +8,8 @@ Description: >
 # What this file does NOT create: the Secrets Manager secret. It holds the Gemini key and
 # the database URL, so its value never goes in git; the stack only refers to it by name.
 #
-# Build the zip first (needs Docker):  infra/aws/build_lambda.sh
-# Deploy (from infra/aws):
+# Build the zip first (needs Docker):  aws/build_lambda.sh
+# Deploy (from aws):
 #   sam deploy --parameter-overrides AlertEmail=you@example.com
 # The stack is created with the schedule DISABLED. Turn it on by redeploying with
 # ScheduleState=ENABLED, and only after the older, hand-built schedule is disabled:
@@ -81,7 +81,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub ${AppName}-pipeline
-      # A prebuilt zip (infra/aws/build_lambda.sh builds it inside AWS's own Lambda image so
+      # A prebuilt zip (aws/build_lambda.sh builds it inside AWS's own Lambda image so
       # the compiled wheels match). SAM uploads it as-is; no `sam build` step.
       CodeUri: build/todue-relay-lambda.zip
       Handler: lambda_handler.handler

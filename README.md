@@ -214,13 +214,15 @@ Scheduler schedule (`cron(0 * * * ? *)`: every hour, on the hour, UTC) invokes t
 Lambda `todue-relay-pipeline` (Python 3.14, arm64, 1024 MB, 15-minute timeout, no VPC).
 `backend/lambda_handler.py` runs the same `run_pipeline`, reads its Gemini key and
 database URL from AWS Secrets Manager, and accepts `{"dry_run": true}` for quota-free
-checks. `infra/aws/build_lambda.sh` packages it inside AWS's own Lambda Python image
+checks. `aws/build_lambda.sh` packages it inside AWS's own Lambda Python image
 (about 37 MB zipped, inside the 50 MB direct-upload limit). Deploying is currently a
-manual `aws lambda update-function-code`; there is no automated deploy yet.
+manual `aws lambda update-function-code`; there is no automated deploy yet. `aws/template.yaml`
+describes the same resources as a SAM template; it is deployed as a separate stack with its
+schedule off until the live setup is moved onto it.
 
 - **Least privilege.** The function's execution role can write one log group and read
   one secret. A separate scheduler role can only invoke the function. The policy
-  templates are in `infra/aws/iam/`, and were checked with IAM Access Analyzer.
+  templates are in `aws/iam/`, and were checked with IAM Access Analyzer.
 - **Failure containment.** No automatic retries (a retry would spend scarce Gemini
   quota) and a queued event is dropped after 60 seconds. A CloudWatch alarm emails on
   any error, and a second alarm fires if the function hasn't run for about 3 hours.
@@ -251,10 +253,10 @@ plan is to move the schedule back to GitHub Actions before the free plan ends in
 .github/workflows/
   pipeline.yml                  # manual / fallback pipeline run (the schedule is on AWS)
   tests.yml                     # CI: the test suite on every push
-infra/
-  aws/
-    build_lambda.sh             # builds the Lambda zip (Docker); deploy is manual
-    iam/                        # IAM policy templates for the Lambda and scheduler roles
+aws/
+  template.yaml                 # SAM template: Lambda, schedule, roles, alarms
+  build_lambda.sh               # builds the Lambda zip (Docker)
+  iam/                          # IAM policy templates for the Lambda and scheduler roles
 backend/
   app/
     pipeline.py                 # orchestrates fetch > filter > extract > route > track

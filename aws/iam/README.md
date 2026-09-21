@@ -23,10 +23,10 @@ Render and apply (from the repo root, signed in with the `todue` profile):
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 REGION=us-east-2
 sed "s/\${ACCOUNT_ID}/$ACCOUNT_ID/g; s/\${REGION}/$REGION/g" \
-  infra/aws/iam/lambda-execution-policy.json.tpl > /tmp/lambda-execution-policy.json
+  aws/iam/lambda-execution-policy.json.tpl > /tmp/lambda-execution-policy.json
 
 aws iam create-role --role-name todue-relay-pipeline-role \
-  --assume-role-policy-document file://infra/aws/iam/lambda-trust-policy.json
+  --assume-role-policy-document file://aws/iam/lambda-trust-policy.json
 aws iam put-role-policy --role-name todue-relay-pipeline-role \
   --policy-name pipeline-permissions --policy-document file:///tmp/lambda-execution-policy.json
 ```

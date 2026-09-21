@@ -17,5 +17,5 @@ claude/
 # Real extracted email/deadline data — never commit
 backend/db_dumps/
 
-# Lambda deployment zip output (infra/aws/build_lambda.sh)
-infra/aws/build/
+# Lambda deployment zip output (aws/build_lambda.sh)
+aws/build/
