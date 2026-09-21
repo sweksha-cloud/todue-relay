@@ -1,13 +1,14 @@
 # ToDue Relay Gmail add-on
 
-A read-only home card in Gmail's side panel: what needs review, what's coming up on the calendar,
-your action items, and how the last run went. It is a second screen over the same data as the htmx
-dashboard, which is unchanged.
+A home card in Gmail's side panel: what needs review, what's coming up on the calendar, your action
+items, and how the last run went, with buttons to add or decline a held-back item, mark an event
+correct or incorrect, or remove it. It is a second screen over the same data and the same actions as
+the htmx dashboard, which is unchanged.
 
-**Status:** the code and its tests are done; it has **not yet been installed in a real Gmail**, so the
-manifest and the card layout are unproven against Google until the first install (steps below).
-Read-only for now; the review buttons (Correct, Incorrect, Reschedule, Remove) and a card for the
-open email are next.
+**Status:** the code and its tests are done, and it has been run end to end (below), but it has **not yet
+been installed in a real Gmail**, so the manifest and the card layout are unproven against Google until
+the first install (steps below). Not built yet: Reschedule and Schedule (they need a date picker), and a
+card for the open email.
 
 ## How it fits together
 
@@ -35,14 +36,24 @@ decides something is in tested code; the untested surface is only the layout of 
 | How the card reads (titles, tags, "+ N more", empty states, error hints) | `src/format.ts` | `vitest` unit tests |
 | Calling the API and every way it can fail | `src/api.ts` | `vitest`, with fake Google services injected |
 | Turning that into Google's widgets | `src/cards.ts` | `vitest`, against a recording fake of `CardService` |
-| The bundled script exposes `onHomepage` etc. as globals and wires the pieces together | `dist/Code.js` | `vitest`, running the real bundle in a sandbox |
+| The bundled script exposes `onHomepage`, `onAction` etc. as globals and wires the pieces together | `dist/Code.js` | `vitest`, running the real bundle in a sandbox |
+| The add-on and the API agree on the response shapes | `contract/api.schema.json` | a backend test fails if the API's models drift from the snapshot; the add-on's tests check their fixtures against the same file |
 | How it *looks* in Gmail | | **manual** checklist below |
 
 ```
 npm install
-npm run typecheck && npm test      # 55 tests
+npm run typecheck && npm test      # 92 tests
 npm run build                      # writes dist/Code.js and dist/appsscript.json
 ```
+
+## What has been run end to end
+
+Beyond the unit tests, the real built bundle was run against the real API, over real HTTP, backed by the
+fake-data database, with only Google's token-key endpoint and Calendar faked. Seventeen checks passed:
+the card shows the sample items, approve / vote / remove go through and the card reflects them (a voted item
+loses its vote buttons), a refused action shows the API's own reason and leaves the card alone, and a
+different Google account is refused, sees no data, and cannot remove an event. The harness was a scratch
+script and is not part of the repository; the unit and bundle tests are.
 
 ## First install (about 20 minutes)
 
@@ -81,6 +92,8 @@ Each later change: `npm run push`, reload Gmail.
 - [ ] An empty list says so; more than ten items shows "+ N more in the dashboard".
 - [ ] Low-confidence and odd-date items carry their tag.
 - [ ] Refresh reloads the card in place.
+- [ ] On a fake-data item needing review, Add to calendar creates an event (then Correct / Incorrect / Remove appear), and Don't add removes it from the list.
+- [ ] A verdict is given once: after Correct or Incorrect only Remove is left.
 - [ ] Set `API_BASE_URL` wrong: an error card names the problem and what to do.
 - [ ] Stop the API: a "could not reach" card, not a blank panel.
 
@@ -105,6 +118,7 @@ Each later change: `npm run push`, reload Gmail.
 
 ## Next
 
-The card for the open email (what was extracted from it, with the review buttons), the write
-endpoints behind those buttons, and deploying the API as a Lambda function URL in the SAM stack so it
-does not depend on a laptop.
+The card for the open email (what was extracted from it, with the same buttons), Reschedule and Schedule
+(a date picker), and deploying the API as a Lambda function URL in the SAM stack so it does not depend on a
+laptop. That needs the CI deploy role's permissions extended first, and it is best done after the first
+real install has shown the card works.

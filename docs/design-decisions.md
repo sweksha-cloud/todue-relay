@@ -239,12 +239,19 @@ verifies the signature, expiry, issuer and audience (a token minted for a differ
 requires a Google-verified email, and allows exactly one address. With either setting empty it refuses
 everything. Rejections reveal nothing about why.
 **Where the logic lives.** Apps Script can only be seen in Gmail and is awkward to debug, so the
-add-on decides nothing. What counts as "needs review" or "upcoming", and how a deadline is worded,
-live in the API in tested Python. The add-on's own logic is plain TypeScript with Google's services
+add-on decides nothing. What counts as "needs review" or "upcoming", how a deadline is worded, and even
+which buttons an item offers live in the API in tested Python. The four review actions (vote, remove,
+approve, decline) moved out of the dashboard's routes into one shared module, so the dashboard and the
+add-on cannot disagree about what an action does; `/approve` and `/decline` had no tests before that
+move, so they got 20, checked against the pre-move code. The add-on's own logic is plain TypeScript with Google's services
 injected, and only the widget layout is left to a manual checklist.
-**Evidence.** 39 backend tests use real RS256 tokens verified against a fake key endpoint; 55 add-on
-tests cover the logic, every way the API call can fail, the card layout against a recording fake of
-Google's card builder, and the real bundle run in a sandbox that stands in for Apps Script. Deliberately
+**Evidence.** Backend tests use real RS256 tokens verified against a fake key endpoint, and check that every
+write route refuses a missing or someone else's Google token; 92 add-on tests cover the logic, every way the
+API call can fail, the card layout against a recording fake of Google's card builder, and the real bundle
+run in a sandbox that stands in for Apps Script. A snapshot of the API's response shapes is checked from both
+sides, so neither can change without the other. Finally the real bundle was run over real HTTP against the
+real API on sample data, with only Google's key endpoint and Calendar faked: 17 checks, including that a
+different Google account is refused and cannot remove an event. Deliberately
 breaking the audience, email and verified-email checks, and separately the login header, the "more"
 note and a global entry point, was each caught by the test meant for it. A bundle-level test earned its
 place by covering what module tests cannot: Apps Script has no module system, so the entry points must
