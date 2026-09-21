@@ -561,3 +561,95 @@ class TestFinishRunDeferred:
         )
 
         assert db_session.get(PipelineRun, run.id).emails_deferred == 0
+
+
+def _failed_row(db, email_id, error, attempts, age_hours=1):
+    """A FAILED row with the given error, attempts and age."""
+    repository.try_claim_email(db, email_id, f"t-{email_id}", f"Subject {email_id}")
+    repository.mark_failed(db, email_id, error)
+    row = db.get(ProcessedEmail, email_id)
+    row.attempt_count = attempts
+    row.created_at = datetime.now(timezone.utc) - timedelta(hours=age_hours)
+    db.commit()
+    return row
+
+
+class TestTransientRefundIsBoundedByAge:
+    def test_a_transient_failure_on_a_recent_email_is_refunded(self, db_session):
+        repository.try_claim_email(db_session, "e1", "t", "s")  # attempt 1
+
+        repository.mark_failed(db_session, "e1", "ServerError: 503", count_attempt=False)
+
+        assert db_session.get(ProcessedEmail, "e1").attempt_count == 0
+
+    def test_a_transient_failure_on_an_old_email_counts(self, db_session, monkeypatch):
+        monkeypatch.setattr(repository, "TRANSIENT_RETRY_WINDOW_HOURS", 48)
+        repository.try_claim_email(db_session, "e1", "t", "s")
+        db_session.get(ProcessedEmail, "e1").created_at = datetime.now(timezone.utc) - timedelta(hours=49)
+        db_session.commit()
+
+        repository.mark_failed(db_session, "e1", "ServerError: 503", count_attempt=False)
+
+        assert db_session.get(ProcessedEmail, "e1").attempt_count == 1
+
+    def test_the_window_is_configurable(self, db_session, monkeypatch):
+        monkeypatch.setattr(repository, "TRANSIENT_RETRY_WINDOW_HOURS", 1)
+        repository.try_claim_email(db_session, "e1", "t", "s")
+        db_session.get(ProcessedEmail, "e1").created_at = datetime.now(timezone.utc) - timedelta(hours=2)
+        db_session.commit()
+
+        repository.mark_failed(db_session, "e1", "x", count_attempt=False)
+
+        assert db_session.get(ProcessedEmail, "e1").attempt_count == 1
+
+    def test_an_ordinary_failure_always_counts_however_young(self, db_session):
+        repository.try_claim_email(db_session, "e1", "t", "s")
+
+        repository.mark_failed(db_session, "e1", "ValueError: bad")
+
+        assert db_session.get(ProcessedEmail, "e1").attempt_count == 1
+
+
+class TestUnparkTransientFailures:
+    def test_finds_only_rows_an_outage_exhausted(self, db_session):
+        _failed_row(db_session, "outage", "ServerError: 503 UNAVAILABLE. high demand", attempts=3)
+        _failed_row(db_session, "typed", "LLMTransientError: 503", attempts=3)
+        _failed_row(db_session, "quota", "LLMRateLimitError: 429", attempts=3)
+        _failed_row(db_session, "own-fault", "ValueError: bad response", attempts=3)
+        _failed_row(db_session, "not-yet-parked", "ServerError: 503", attempts=1)
+
+        found = {r.email_id for r in repository.find_parked_transient_failures(db_session)}
+
+        assert found == {"outage", "typed", "quota"}
+
+    def test_ignores_rows_that_are_not_failed(self, db_session):
+        repository.try_claim_email(db_session, "done", "t", "s")
+        row = db_session.get(ProcessedEmail, "done")
+        row.status, row.attempt_count, row.error_message = ProcessingStatus.COMPLETED, 3, "ServerError: 503"
+        db_session.commit()
+
+        assert repository.find_parked_transient_failures(db_session) == []
+
+    def test_unparking_gives_a_fresh_set_of_attempts_and_makes_the_row_claimable_again(self, db_session):
+        _failed_row(db_session, "outage", "ServerError: 503", attempts=3)
+        assert repository.would_claim_email(db_session, "outage") is False  # parked
+
+        ids = repository.unpark_transient_failures(db_session)
+
+        assert ids == ["outage"]
+        assert db_session.get(ProcessedEmail, "outage").attempt_count == 0
+        assert repository.would_claim_email(db_session, "outage") is True
+        assert repository.try_claim_email(db_session, "outage", "t", "s") is True
+
+    def test_leaves_rows_that_failed_for_their_own_reasons_parked(self, db_session):
+        _failed_row(db_session, "own-fault", "ExtractionParseError: bad schema", attempts=3)
+
+        assert repository.unpark_transient_failures(db_session) == []
+        assert db_session.get(ProcessedEmail, "own-fault").attempt_count == 3
+
+    def test_keeps_the_error_message_so_the_history_is_not_lost(self, db_session):
+        _failed_row(db_session, "outage", "ServerError: 503 UNAVAILABLE", attempts=3)
+
+        repository.unpark_transient_failures(db_session)
+
+        assert db_session.get(ProcessedEmail, "outage").error_message == "ServerError: 503 UNAVAILABLE"

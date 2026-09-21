@@ -5,7 +5,9 @@ from app import pipeline
 from app.db import repository
 from app.db.models import PipelineRun, ProcessedEmail, ProcessingStatus, RunStatus
 from app.gmail_client import EmailMessage
-from app.llm_client import LLMRateLimitError
+from datetime import datetime, timedelta, timezone
+
+from app.llm_client import LLMRateLimitError, LLMTransientError
 from app.pipeline import _claim_and_process
 from app.schemas import ExtractionResult
 
@@ -106,6 +108,67 @@ class TestRateLimitDoesNotCountTowardRetryCap:
         pipeline._claim_and_process(db_session, _email())
 
         assert db_session.get(ProcessedEmail, "e1").attempt_count == 1
+
+
+class TestTransientErrorsDoNotCountTowardRetryCap:
+    """A Gemini 503 ("high demand") is not the email's fault. On 2026-09-19 to 09-21 such errors used up the
+    3 attempts of three good emails and parked them for good. They are refunded now, within a time bound."""
+
+    def _fail_with(self, monkeypatch, exc):
+        def failing(email):
+            raise exc
+
+        monkeypatch.setattr(pipeline, "extract_deadline", failing)
+
+    def test_a_503_is_recorded_as_failed_but_the_attempt_is_refunded(self, db_session, monkeypatch):
+        self._fail_with(monkeypatch, LLMTransientError("503 UNAVAILABLE. This model is currently experiencing high demand."))
+
+        assert pipeline._claim_and_process(db_session, _email()) == "failed"
+
+        row = db_session.get(ProcessedEmail, "e1")
+        assert row.status == ProcessingStatus.FAILED
+        assert "high demand" in row.error_message  # still visible on the dashboard
+        assert row.error_message.startswith("LLMTransientError:")
+        assert row.attempt_count == 0
+
+    def test_a_long_outage_never_parks_a_recent_email(self, db_session, monkeypatch):
+        monkeypatch.setattr(repository, "MAX_ATTEMPTS_PER_EMAIL", 3)
+        self._fail_with(monkeypatch, LLMTransientError("503"))
+
+        for _ in range(8):  # far more than the cap: hourly runs through a long outage
+            assert pipeline._claim_and_process(db_session, _email()) == "failed"
+
+        assert repository.would_claim_email(db_session, "e1")  # still retryable
+
+    def test_a_success_after_the_outage_completes_normally(self, db_session, monkeypatch):
+        self._fail_with(monkeypatch, LLMTransientError("503"))
+        for _ in range(5):
+            pipeline._claim_and_process(db_session, _email())
+
+        assert repository.try_claim_email(db_session, "e1", "t1", "s") is True  # the next run can claim it
+
+    def test_an_email_that_keeps_failing_for_days_is_eventually_parked(self, db_session, monkeypatch):
+        """The bound: a permanent server error must not be retried every hour forever, because the
+        recovery sweep re-fetches FAILED rows by id whatever the fetch window."""
+        monkeypatch.setattr(repository, "MAX_ATTEMPTS_PER_EMAIL", 3)
+        self._fail_with(monkeypatch, LLMTransientError("500 INTERNAL"))
+        pipeline._claim_and_process(db_session, _email())  # creates the row, refunded
+        row = db_session.get(ProcessedEmail, "e1")
+        row.created_at = datetime.now(timezone.utc) - timedelta(hours=repository.TRANSIENT_RETRY_WINDOW_HOURS + 1)
+        db_session.commit()
+
+        results = [pipeline._claim_and_process(db_session, _email()) for _ in range(5)]
+
+        assert results[:3] == ["failed", "failed", "failed"]  # counted now, so the cap takes over
+        assert results[3:] == ["skipped", "skipped"]  # parked: no longer claimed
+        assert db_session.get(ProcessedEmail, "e1").attempt_count == 3
+
+    def test_a_429_is_still_covered(self, db_session, monkeypatch):
+        self._fail_with(monkeypatch, LLMRateLimitError("429"))
+
+        pipeline._claim_and_process(db_session, _email())
+
+        assert db_session.get(ProcessedEmail, "e1").attempt_count == 0
 
 
 # --- Daily call budget guard -------------------------------------------------

@@ -263,6 +263,34 @@ would mean rewriting the pipeline in JavaScript.
 layout are unproven against Google until the first install.
 
 
+### 25. A Gemini outage does not use up an email's retries
+**The incident.** While checking the runs after a deploy, three good emails were found permanently
+`failed`: each had used its 3 attempts on Gemini's "503 UNAVAILABLE, high demand", a temporary capacity
+error on Google's side, and been parked for good. The design already exempted 429 rate-limit errors from
+the retry cap, but only 429; any other error, a 5xx included, counted as if the email were to blame.
+**What the cap is for.** It stops a poison email (one that always fails) from calling Gemini every hour
+forever. That is worth keeping, and the fix must not undo it.
+**The fix.** A 5xx from Gemini and a dropped connection are now transient like a 429: the attempt is
+refunded, so the email stays retryable through an outage. Anything about the request itself (a 400, a bad
+response, an unparseable date) still counts.
+**The bound, which is the important part.** Refunding without limit would be a bug of its own: the
+recovery sweep re-fetches failed emails by id whatever the 2-day fetch window, so an email that triggers a
+*permanent* server error would be retried every hour indefinitely. So the refund applies only while the
+email is younger than `TRANSIENT_RETRY_WINDOW_HOURS` (default 48, matching the fetch window). Past that a
+failure counts normally and the cap takes over, which bounds the cost of a misclassified email to about two
+days of hourly attempts.
+**Alternatives.** In-run retries with backoff spend extra calls against a 5-per-minute, 20-per-day limit and
+the next hourly run is already a retry. Raising the cap only delays parking a poison email and does not cover
+a long outage. A separate transient-failure counter is more precise but needs a manual `ALTER TABLE` on the
+production database, and the age bound needs none.
+**Recovery for the emails already parked.** `python -m scripts.retry_failed` lists (and with `--apply`
+gives fresh attempts to) rows that failed *only* with a transient error, leaving emails that failed for
+their own reasons parked. It changes nothing without `--apply`.
+**Evidence.** 29 new tests. Deliberately removing the age bound, un-parking rows that failed for their own
+reasons, reverting the pipeline to refund only 429s, and dropping the 5xx translation were each caught by
+the test meant for it.
+
+
 ---
 
 ## Scaling to other users (a plan; not built)

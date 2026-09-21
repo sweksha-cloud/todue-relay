@@ -61,7 +61,7 @@ flowchart LR
 | An unsure model must not silently write to your calendar | Confidence routing: only high confidence with a plausible date auto-creates. An implausible date is never dropped; it is flagged and queued | `app/pipeline.py` |
 | The same deadline arrives twice, or moves | Name-similarity matching against tracked deadlines: always the same day, and across days only when the email has reschedule wording. A match with a changed date updates the existing event | `app/db/repository.py` |
 | Timezones silently shift real events | Explicit `CALENDAR_TIMEZONE` (never the runner's clock), offsets attached to event times, and regression tests for every bug found in real data (`EST/EDT`, spelled-out regions, `GMT+2` sign inversion) | `app/date_utils.py`, `tests/test_date_utils.py` |
-| The free Gemini tier allows 20 calls a day | A per-day budget (resets midnight Pacific), a retry cap where 429s don't count against an email, and a `--dry-run` that spends nothing. See [Gemini quota](#gemini-quota) | `app/pipeline.py`, `app/metrics.py` |
+| The free Gemini tier allows 20 calls a day | A per-day budget (resets midnight Pacific), a retry cap where Gemini's 429 and 5xx errors don't count against an email (for a bounded time), and a `--dry-run` that spends nothing. See [Gemini quota](#gemini-quota) | `app/pipeline.py`, `app/metrics.py` |
 | CI runners and Lambda have no persistent disk | The Google OAuth token lives in Postgres, not a local file; the local copy is only a best-effort dev mirror | `app/google_auth.py` |
 | Least privilege | Gmail access is `readonly`; Calendar access is events-only; workflows run with `contents: read` | `app/config.py`, `.github/workflows/` |
 
@@ -172,8 +172,11 @@ in layers:
   `GEMINI_DAILY_RESERVE`, a run stops claiming emails. They are *deferred*:
   never claimed, left untouched, and picked up by a later run after the reset.
 - **Retry cap:** an email that keeps failing is retried at most
-  `MAX_ATTEMPTS_PER_EMAIL` times, then stays visibly `failed`. Rate-limit (429)
-  errors don't count toward it.
+  `MAX_ATTEMPTS_PER_EMAIL` times, then stays visibly `failed`. Errors that are not the
+  email's fault (Gemini's 429 rate limits and 5xx "high demand" errors, a dropped connection) don't
+  count toward it, but only while the email is younger than `TRANSIENT_RETRY_WINDOW_HOURS` (48), so a
+  permanent server error cannot be retried forever. `python -m scripts.retry_failed` gives emails
+  that an outage parked before this a fresh set of attempts.
 - **Dry run:** shows what a run would do without spending anything
   (`--dry-run`, or the dashboard button).
 
@@ -201,8 +204,8 @@ TEST_DATABASE_URL=postgresql+psycopg://postgres:test@localhost:55432/testdb \
   python -m pytest tests/ -v
 ```
 
-300 tests across 19 files (plus 92 for the Gmail add-on), covering date and timezone parsing, pre-filter
-scoring, LLM response validation (including 429 handling), Calendar event
+329 tests across 20 files (plus 92 for the Gmail add-on), covering date and timezone parsing, pre-filter
+scoring, LLM response validation (including 429 and 5xx handling), Calendar event
 construction (including recurrence), duplicate-deadline matching, the idempotency
 claim logic and retry cap, the daily call budget and dry-run mode (driving the
 real `run_pipeline` loop with only Gmail and Gemini stubbed), the metrics, the
@@ -310,7 +313,7 @@ backend/
   requirements.txt              # full app (pipeline + dashboard)
   requirements-lambda.txt       # pipeline-only, for the Lambda package
   requirements-dev.txt
-  tests/                        # 300 tests, run against real Postgres
+  tests/                        # 329 tests, run against real Postgres
 addon/                          # Gmail add-on (Apps Script, TypeScript): a read-only home card
 docs/
   design-decisions.md           # 23 decisions: what else was considered, and the evidence

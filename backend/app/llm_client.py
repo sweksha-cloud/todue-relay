@@ -10,6 +10,7 @@ import threading
 import time
 from functools import lru_cache
 
+import httpx  # a hard dependency of google-genai, so always present
 from google import genai
 from google.genai import errors, types
 
@@ -22,12 +23,20 @@ _rate_limit_lock = threading.Lock()
 _last_call_at: float = 0.0
 
 
-class LLMRateLimitError(Exception):
+class LLMTransientError(Exception):
+    """The call failed for a reason that says nothing about this email: Gemini answered with a 5xx
+    ("503 UNAVAILABLE, high demand" is the common one) or the connection dropped. A retry later will
+    likely succeed, so the pipeline refunds the attempt instead of counting it toward
+    MAX_ATTEMPTS_PER_EMAIL, within a time bound (config.TRANSIENT_RETRY_WINDOW_HOURS). The message keeps
+    the API's full error text so it stays visible in the run's error_message.
+    """
+
+
+class LLMRateLimitError(LLMTransientError):
     """The API rejected the call with a 429 — a per-minute or per-day quota
     was hit. Says nothing about the email itself (a retry after the quota
-    resets will likely succeed), so the pipeline does not count it toward
-    MAX_ATTEMPTS_PER_EMAIL. The message keeps the API's full error text,
-    including the quotaId/quotaValue that shows *which* limit was hit.
+    resets will likely succeed), so it is transient like any other. The message keeps the
+    API's full error text, including the quotaId/quotaValue that shows *which* limit was hit.
     """
 
 
@@ -59,7 +68,8 @@ def extract_deadline(email: EmailMessage) -> ExtractionResult:
 
     Raises ExtractionParseError / UnparseableDateError per the contract in
     app/schemas.py — callers handle those distinctly from a transport-level
-    API failure (network, auth, rate limit), which is left to propagate as-is.
+    API failure: a 429, a 5xx or a dropped connection raises LLMTransientError (see above); anything
+    else (auth, a bad request) propagates as-is.
     """
     _wait_for_rate_limit()
     try:
@@ -75,5 +85,9 @@ def extract_deadline(email: EmailMessage) -> ExtractionResult:
     except errors.ClientError as e:
         if e.code == 429:
             raise LLMRateLimitError(str(e)) from e
-        raise
+        raise  # a 400 and the like are about this email's request: they count
+    except errors.ServerError as e:
+        raise LLMTransientError(str(e)) from e
+    except httpx.TransportError as e:  # connection refused or reset, a timeout
+        raise LLMTransientError(f"{type(e).__name__}: {e}") from e
     return parse_llm_response(response.text)

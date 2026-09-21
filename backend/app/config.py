@@ -70,6 +70,15 @@ RUN_LOCK_TTL_MINUTES = int(os.getenv("RUN_LOCK_TTL_MINUTES", "30"))
 # reclaim — see repository.try_claim_email.
 MAX_ATTEMPTS_PER_EMAIL = int(os.getenv("MAX_ATTEMPTS_PER_EMAIL", "3"))
 
+# A failure that isn't the email's fault (Gemini's 429 quota errors, its 5xx "high demand" errors, a
+# dropped connection) is refunded, so an outage cannot use up an email's attempts and park it for good.
+# But that refund needs a bound, or an email that triggers a *permanent* server error would be retried
+# every hour forever (the recovery sweep re-fetches FAILED rows by id, ignoring the fetch window). So the
+# refund only applies while the email is younger than this. Past it, a failure counts like any other and
+# the cap takes over. Default matches the 2-day fetch window.
+# See docs/design-decisions.md, decision 25.
+TRANSIENT_RETRY_WINDOW_HOURS = int(os.getenv("TRANSIENT_RETRY_WINDOW_HOURS", "48"))
+
 # Length of a timed Calendar event when the deadline has an explicit time.
 # Decided 2026-09-15: 0 — a point-in-time marker exactly at the deadline
 # ("due at 5" -> an event at 5, not a 5:00-5:30 block). A date-only

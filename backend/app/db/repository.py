@@ -18,7 +18,12 @@ from sqlalchemy import BigInteger, func, literal, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.config import DUPLICATE_EVENT_NAME_SIMILARITY_THRESHOLD, MAX_ATTEMPTS_PER_EMAIL, STALE_CLAIM_MINUTES
+from app.config import (
+    DUPLICATE_EVENT_NAME_SIMILARITY_THRESHOLD,
+    MAX_ATTEMPTS_PER_EMAIL,
+    STALE_CLAIM_MINUTES,
+    TRANSIENT_RETRY_WINDOW_HOURS,
+)
 from app.date_utils import has_explicit_time
 from app.db.models import ActionType, Confidence, OAuthToken, PipelineRun, ProcessedEmail, ProcessingStatus, RunStatus
 from app.schemas import ExtractionResult
@@ -273,10 +278,14 @@ def mark_skipped(session: Session, email_id: str, reason: str) -> None:
 
 def mark_failed(session: Session, email_id: str, error: str, *, count_attempt: bool = True) -> None:
     """count_attempt=False refunds the attempt try_claim_email just counted,
-    for a failure that isn't the email's fault (an API rate-limit 429) —
-    otherwise a quota outage would burn through MAX_ATTEMPTS_PER_EMAIL and
-    permanently park good emails, when the daily quota only resets at
-    midnight Pacific.
+    for a failure that isn't the email's fault (a Gemini 429 or 5xx, a dropped connection) —
+    otherwise an outage would burn through MAX_ATTEMPTS_PER_EMAIL and permanently park good
+    emails (a quota only resets at midnight Pacific; a 503 spike can last hours).
+
+    The refund is bounded by the email's age (TRANSIENT_RETRY_WINDOW_HOURS). Without a bound, an
+    email that triggers a *permanent* server error would be retried every hour forever, because
+    the recovery sweep re-fetches FAILED rows by id whatever the fetch window. Once the row is
+    older than the window the failure counts like any other and the cap takes over.
     """
     row = session.get(ProcessedEmail, email_id)
     if row is None:
@@ -284,9 +293,45 @@ def mark_failed(session: Session, email_id: str, error: str, *, count_attempt: b
 
     row.status = ProcessingStatus.FAILED
     row.error_message = error
-    if not count_attempt:
+    if not count_attempt and _within_transient_window(row):
         row.attempt_count = max(0, row.attempt_count - 1)
     session.commit()
+
+
+def _within_transient_window(row: ProcessedEmail) -> bool:
+    if row.created_at is None:
+        return True
+    return datetime.now(timezone.utc) - row.created_at <= timedelta(hours=TRANSIENT_RETRY_WINDOW_HOURS)
+
+
+# Errors recorded as "<ExceptionName>: message" by the pipeline. The first is what a Gemini 5xx looked
+# like before LLMTransientError existed; the others are what it records now.
+_TRANSIENT_ERROR_PATTERN = r"^(ServerError|LLMTransientError|LLMRateLimitError):"
+
+
+def find_parked_transient_failures(session: Session) -> list[ProcessedEmail]:
+    """FAILED rows that ran out of attempts only because of a transient upstream error: emails that a
+    Gemini outage parked for good, before such errors stopped counting. Oldest first."""
+    stmt = (
+        select(ProcessedEmail)
+        .where(
+            ProcessedEmail.status == ProcessingStatus.FAILED,
+            ProcessedEmail.attempt_count >= MAX_ATTEMPTS_PER_EMAIL,
+            ProcessedEmail.error_message.op("~")(_TRANSIENT_ERROR_PATTERN),
+        )
+        .order_by(ProcessedEmail.created_at)
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
+def unpark_transient_failures(session: Session) -> list[str]:
+    """Give every parked-by-an-outage row a fresh set of attempts, so the next run (or the recovery
+    sweep) retries it. Returns the ids. Rows that failed for their own reasons are left parked."""
+    rows = find_parked_transient_failures(session)
+    for row in rows:
+        row.attempt_count = 0
+    session.commit()
+    return [row.email_id for row in rows]
 
 
 def get_recoverable_stuck_email_ids(session: Session) -> list[str]:
