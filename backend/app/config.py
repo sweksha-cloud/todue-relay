@@ -150,3 +150,11 @@ GEMINI_DAILY_RESERVE = int(os.getenv("GEMINI_DAILY_RESERVE", "2"))
 # creeping approach to the limit is noticed before the pipeline starts
 # failing on 429s.
 LLM_USAGE_WARNING_THRESHOLD_PCT = float(os.getenv("LLM_USAGE_WARNING_THRESHOLD_PCT", "80"))
+
+# Gmail add-on API (app/addon_app.py). The add-on runs on Google's servers and sends a Google
+# identity token with each request (Apps Script: ScriptApp.getIdentityToken()). The API accepts a
+# request only if the token is genuine, was issued for THIS client id, and belongs to this one
+# email address. Both must be set; with either empty the API refuses everything (fail closed).
+# The client id is the "aud" claim of a token the add-on obtains: see addon/README.md.
+ADDON_OAUTH_CLIENT_ID = os.getenv("ADDON_OAUTH_CLIENT_ID", "").strip()
+ADDON_ALLOWED_EMAIL = os.getenv("ADDON_ALLOWED_EMAIL", "").strip().lower()

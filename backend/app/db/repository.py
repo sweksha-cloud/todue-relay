@@ -645,3 +645,57 @@ def count_deadlines_caught_since(session: Session, since: datetime) -> int:
         )
     )
     return session.execute(stmt).scalar_one()
+
+
+def _needs_review_filter():
+    # Same meaning as the dashboard's "needs review" badge (view_helpers.display_status): the
+    # extraction finished, but nothing was put on the calendar, so a person has to decide.
+    return (
+        _recent_emails_filter()
+        & (ProcessedEmail.status == ProcessingStatus.COMPLETED)
+        & ProcessedEmail.calendar_event_id.is_(None)
+    )
+
+
+def list_needs_review(session: Session, limit: int = 10) -> list[ProcessedEmail]:
+    """Extractions waiting on a human decision, newest first. Its own query, not a slice of
+    list_recent_emails, so an old item is never pushed out of view by newer ones."""
+    stmt = (
+        select(ProcessedEmail)
+        .where(_needs_review_filter())
+        .order_by(ProcessedEmail.created_at.desc())
+        .limit(limit)
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
+def count_needs_review(session: Session) -> int:
+    stmt = select(func.count()).select_from(ProcessedEmail).where(_needs_review_filter())
+    return session.execute(stmt).scalar_one()
+
+
+def _upcoming_filter(since: datetime):
+    # Live calendar events (removed ones are excluded by _recent_emails_filter) whose deadline has
+    # not passed by more than the caller's grace period.
+    return (
+        _recent_emails_filter()
+        & ProcessedEmail.calendar_event_id.is_not(None)
+        & ProcessedEmail.extraction_deadline_parsed.is_not(None)
+        & (ProcessedEmail.extraction_deadline_parsed >= since)
+    )
+
+
+def list_upcoming_on_calendar(session: Session, since: datetime, limit: int = 10) -> list[ProcessedEmail]:
+    """Events this pipeline put on the calendar, soonest deadline first."""
+    stmt = (
+        select(ProcessedEmail)
+        .where(_upcoming_filter(since))
+        .order_by(ProcessedEmail.extraction_deadline_parsed.asc())
+        .limit(limit)
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
+def count_upcoming_on_calendar(session: Session, since: datetime) -> int:
+    stmt = select(func.count()).select_from(ProcessedEmail).where(_upcoming_filter(since))
+    return session.execute(stmt).scalar_one()
