@@ -67,19 +67,20 @@ script and is not part of the repository; the unit and bundle tests are.
    function `debugToken`, and Run it. Approve the permissions (Google warns the app is unverified: that is
    expected for your own script; choose Advanced, then Go to ToDue Relay). The execution log prints the
    `aud` and your email.
-5. **Start the API against the fake-data database, never the real one.** From `backend/`, with the
-   virtualenv active:
+5. **Start the API and a public tunnel, against the fake-data database, never the real one.** From the
+   repo root:
    ```
-   DATABASE_URL=<the preview database> \
+   PREVIEW_DATABASE_URL=<the fake-data database> \
    ADDON_OAUTH_CLIENT_ID=<the aud from step 4> \
    ADDON_ALLOWED_EMAIL=<your email> \
-   uvicorn app.addon_app:app --port 8002
+   addon/scripts/dev.sh
    ```
-6. **Give it a public address.** `cloudflared tunnel --url http://localhost:8002` prints an
-   `https://….trycloudflare.com` address. It changes every time the tunnel restarts.
-7. **Tell the add-on where the API is.** Project Settings, Script properties, add `API_BASE_URL` with
-   that address (no trailing path).
-8. **Install it in your Gmail.** In the editor choose Deploy, then Test deployments, then Install
+   It refuses a database whose name does not contain "preview", starts the add-on API (its own app: the
+   dashboard is not served) and a `cloudflared` tunnel (`brew install cloudflared`), and prints
+   `API_BASE_URL = https://….trycloudflare.com`. Ctrl-C stops both. The address changes each time it restarts.
+6. **Tell the add-on where the API is.** Project Settings, Script properties, add `API_BASE_URL` with the
+   address the script printed (no trailing path).
+7. **Install it in your Gmail.** In the editor choose Deploy, then Test deployments, then Install
    (the menu wording has changed over the years; look for the Gmail add-on test install). Reload Gmail:
    the ToDue Relay icon appears in the right-hand panel.
 
