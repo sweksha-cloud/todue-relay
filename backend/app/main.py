@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from app import calendar_client, metrics, pipeline
+from app import calendar_client, metrics, pipeline, review_actions
 from app.date_utils import detect_local_timezone, to_local
 from app.db import repository
 from app.db.models import ActionType, Base, ProcessedEmail, ProcessingStatus
@@ -168,11 +168,10 @@ def correct_email(
     separate actions that change the event; Incorrect and Reschedule can be used together
     (the vote says the extraction was wrong, Reschedule fixes the time).
     """
-    row = db.get(ProcessedEmail, email_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="No such email")
-
-    row = repository.set_correction(db, email_id, is_correct)
+    try:
+        row = review_actions.record_vote(db, email_id, is_correct)
+    except review_actions.ActionError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
     return templates.TemplateResponse(request, "_row.html", {"email": row})
 
 
@@ -254,15 +253,10 @@ def remove_email(request: Request, email_id: str, db: Session = Depends(get_db))
     (recorded as an "incorrect" vote, and so it is never re-added) but no longer
     listed, so the response is empty: htmx swaps the row out of the table.
     """
-    row = db.get(ProcessedEmail, email_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="No such email")
-    if not row.calendar_event_id:
-        raise HTTPException(status_code=400, detail="No live Calendar event to remove")
-
-    service = calendar_client.get_calendar_service()
-    calendar_client.delete_event(service, row.calendar_event_id)
-    repository.remove_calendar_event(db, email_id)
+    try:
+        review_actions.remove_event(db, email_id)
+    except review_actions.ActionError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
     return HTMLResponse(content="")
 
 
@@ -272,22 +266,10 @@ def approve_email(request: Request, email_id: str, db: Session = Depends(get_db)
     the pipeline held back on, per the confidence-routing decision
     (docs/design-decisions.md, decision 9: auto-create high, queue low for review).
     """
-    row = db.get(ProcessedEmail, email_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="No such email")
-    if row.status != ProcessingStatus.COMPLETED or row.calendar_event_id or not row.extraction_deadline_parsed:
-        raise HTTPException(status_code=400, detail="Not an approvable item")
-
-    service = calendar_client.get_calendar_service()
-    event_id = calendar_client.create_event(
-        service,
-        summary=row.extraction_event_name or row.email_subject,
-        description=row.extraction_source_context or "",
-        deadline=row.extraction_deadline_parsed,
-        has_time=bool(row.extraction_has_time),
-        recurrence_rule=row.extraction_recurrence_rule if row.extraction_is_recurring else None,
-    )
-    row = repository.set_calendar_event(db, email_id, event_id)
+    try:
+        row = review_actions.approve(db, email_id)
+    except review_actions.ActionError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
     return templates.TemplateResponse(request, "_row.html", {"email": row})
 
 
@@ -296,9 +278,7 @@ def decline_email(request: Request, email_id: str, db: Session = Depends(get_db)
     """The 'don't add' side of the same checkmark — permanently skip
     without creating a Calendar event."""
     try:
-        repository.mark_skipped(db, email_id, "declined by user (low-confidence review)")
-    except ValueError:
-        raise HTTPException(status_code=404, detail="No such email")
-
-    row = db.get(ProcessedEmail, email_id)
+        row = review_actions.decline(db, email_id)
+    except review_actions.ActionError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
     return templates.TemplateResponse(request, "_row.html", {"email": row})
