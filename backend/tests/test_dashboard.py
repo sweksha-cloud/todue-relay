@@ -358,27 +358,118 @@ class TestRemovedItemsAreNotVotes:
         weeks = metrics.weekly_correction_rate(db_session)
         assert (weeks[-1]["correct"], weeks[-1]["total"]) == (2, 3)
 
-    def test_removed_rows_are_excluded_from_both_rates_including_legacy_ones(self, db_session):
-        """Rows removed before this change were stored as an incorrect vote with the old
-        "(marked incorrect)" text; they must stop counting too, without a data migration.
+    def test_only_the_legacy_auto_votes_from_the_old_remove_button_are_excluded(self, db_session):
+        """Rows removed before Remove stopped recording a verdict hold an automatic "incorrect" vote
+        with the old "(marked incorrect)" text; those must not count, with no data migration. A vote the
+        user cast explicitly still counts even if the row was removed afterwards.
         """
         _vote(db_session, "e1", True, "Kept and correct")
         _vote(db_session, "e2", False, "Wrong extraction")
-        for email_id, marker in (
-            ("r_new", repository.REMOVED_BY_USER_MESSAGE),
-            ("r_legacy", "removed from calendar by user (marked incorrect)"),
-        ):
-            _vote(db_session, email_id, False, f"Removed {email_id}")
-            db_session.get(ProcessedEmail, email_id).error_message = marker
+        _vote(db_session, "legacy", False, "Removed with the old button")
+        db_session.get(ProcessedEmail, "legacy").error_message = "removed from calendar by user (marked incorrect)"
+        _vote(db_session, "explicit", False, "Voted incorrect, then removed")
+        db_session.get(ProcessedEmail, "explicit").error_message = repository.REMOVED_BY_USER_MESSAGE
         db_session.commit()
 
-        assert repository.get_correction_rate(db_session) == 0.5  # 1 correct of the 2 real votes
+        assert repository.get_correction_rate(db_session) == pytest.approx(1 / 3)  # e1 correct; e2 + explicit incorrect
         weeks = metrics.weekly_correction_rate(db_session)
-        assert (weeks[-1]["correct"], weeks[-1]["total"]) == (1, 2)
+        assert (weeks[-1]["correct"], weeks[-1]["total"]) == (1, 3)
 
-    def test_a_reschedule_still_counts_as_a_wrong_vote(self, db_session):
-        """Moving the time means the extracted time was wrong, which is a real verdict."""
+    def test_a_plain_reschedule_is_not_a_vote(self, db_session):
+        """The user may want a different time without the extraction being wrong."""
         _completed_row(db_session, "e1")
         repository.reschedule_email(db_session, "e1", datetime.now(timezone.utc) + timedelta(days=9), has_time=True)
 
+        assert db_session.get(ProcessedEmail, "e1").user_correction is None
+        assert repository.get_correction_rate(db_session) is None  # no votes at all
+
+
+# --- Incorrect and Reschedule on a row with a live event --------------------------------------
+@pytest.fixture
+def event_calls(monkeypatch):
+    """Stub the Calendar: record updates and deletions to the event."""
+    calls = {"updated": [], "deleted": []}
+    monkeypatch.setattr(main.calendar_client, "get_calendar_service", lambda: object())
+    monkeypatch.setattr(main.calendar_client, "update_event", lambda service, **kw: calls["updated"].append(kw))
+    monkeypatch.setattr(main.calendar_client, "delete_event", lambda service, event_id: calls["deleted"].append(event_id))
+    monkeypatch.setattr(main, "detect_local_timezone", lambda: "America/Los_Angeles")
+    return calls
+
+
+class TestIncorrectAndRescheduleOnALiveEvent:
+    def test_an_unvoted_live_row_offers_correct_incorrect_reschedule_and_remove(self, client, db_session):
+        _completed_row(db_session)
+
+        page = client.get("/").text
+
+        assert '"is_correct": "true"' in page and "Correct" in page
+        assert '"is_correct": "false"' in page and "Incorrect" in page
+        assert "/emails/e1/reschedule" in page
+        assert "/emails/e1/remove" in page
+
+    def test_incorrect_records_the_vote_without_touching_the_calendar_event(self, client, db_session, event_calls):
+        _completed_row(db_session)
+
+        response = client.post("/emails/e1/correct", data={"is_correct": "false"})
+
+        assert response.status_code == 200
+        row = db_session.get(ProcessedEmail, "e1")
+        assert row.user_correction is False
+        assert row.calendar_event_id == "cal-1"  # the event is still there
+        assert event_calls == {"updated": [], "deleted": []}  # and was not modified
+
+    def test_after_incorrect_the_row_offers_reschedule_and_remove_but_no_more_voting(
+        self, client, db_session, event_calls
+    ):
+        _completed_row(db_session)
+
+        html = client.post("/emails/e1/correct", data={"is_correct": "false"}).text
+
+        assert "Marked incorrect — choose reschedule or remove" in html  # tells the user what to do next
+        assert "/emails/e1/reschedule" in html and "Reschedule" in html
+        assert "/emails/e1/remove" in html
+        assert '"is_correct"' not in html  # the voting buttons are gone once a verdict exists
+
+    def test_reschedule_alone_moves_the_event_and_records_no_verdict(self, client, db_session, event_calls):
+        _completed_row(db_session)
+
+        response = client.post("/emails/e1/reschedule", data={"new_datetime": "2026-10-05T14:30"})
+
+        assert response.status_code == 200
+        assert len(event_calls["updated"]) == 1  # the real event was moved
+        assert db_session.get(ProcessedEmail, "e1").user_correction is None
+        assert repository.get_correction_rate(db_session) is None
+
+    def test_incorrect_then_reschedule_keeps_the_wrong_vote_and_fixes_the_time(
+        self, client, db_session, event_calls
+    ):
+        _completed_row(db_session)
+        client.post("/emails/e1/correct", data={"is_correct": "false"})
+
+        client.post("/emails/e1/reschedule", data={"new_datetime": "2026-10-05T14:30"})
+
+        row = db_session.get(ProcessedEmail, "e1")
+        assert row.user_correction is False  # still marked incorrect
+        assert row.extraction_deadline_parsed == datetime(2026, 10, 5, 14, 30, tzinfo=ZoneInfo("America/Los_Angeles"))
+        assert len(event_calls["updated"]) == 1
         assert repository.get_correction_rate(db_session) == 0.0
+
+    def test_a_correct_verdict_still_leaves_reschedule_and_remove_available(self, client, db_session, event_calls):
+        _completed_row(db_session)
+
+        html = client.post("/emails/e1/correct", data={"is_correct": "true"}).text
+
+        assert "Marked correct" in html
+        assert "/emails/e1/reschedule" in html and "/emails/e1/remove" in html
+
+    def test_incorrect_then_remove_keeps_the_explicit_vote_in_the_statistics(self, client, db_session, event_calls):
+        _completed_row(db_session, "e1")
+        _completed_row(db_session, "e2", event_id="cal-2", subject="Kept")
+        repository.set_correction(db_session, "e2", True)
+        client.post("/emails/e1/correct", data={"is_correct": "false"})
+
+        client.post("/emails/e1/remove")
+
+        assert repository.list_recent_emails(db_session)[0].email_id == "e2"  # e1 is hidden
+        assert event_calls["deleted"] == ["cal-1"]
+        assert repository.get_correction_rate(db_session) == 0.5  # the explicit incorrect vote still counts

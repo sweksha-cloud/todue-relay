@@ -255,7 +255,7 @@ class TestRescheduleAndRemove:
 
         assert row.calendar_event_id == "cal-1"  # same event, corrected
         assert row.extraction_deadline_parsed == new_date
-        assert row.user_correction is False  # rescheduling implies it was wrong
+        assert row.user_correction is None  # a plain reschedule is not a verdict on the extraction
 
     def test_remove_clears_event_and_prevents_reapproval(self, db_session):
         repository.try_claim_email(db_session, "e1", "t1", "subject")

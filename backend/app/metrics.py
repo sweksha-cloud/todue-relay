@@ -37,7 +37,7 @@ from app.config import (
     LLM_USAGE_WARNING_THRESHOLD_PCT,
 )
 from app.db.models import ActionType, PipelineRun, ProcessedEmail, ProcessingStatus
-from app.db.repository import not_removed
+from app.db.repository import explicit_votes_only
 
 # Gemini's requests-per-day quota resets at midnight Pacific (per Google's rate-limit
 # docs), regardless of where this runs — so "today" for quota purposes is a Pacific day.
@@ -176,7 +176,7 @@ def weekly_correction_rate(session: Session, weeks: int = 12) -> list[dict]:
             func.count().label("total"),
             func.sum(case((ProcessedEmail.user_correction.is_(True), 1), else_=0)).label("correct"),
         )
-        .where(ProcessedEmail.user_correction.is_not(None), not_removed())
+        .where(ProcessedEmail.user_correction.is_not(None), explicit_votes_only())
         .group_by(week_col)
         .order_by(week_col.desc())
         .limit(weeks)

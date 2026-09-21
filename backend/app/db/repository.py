@@ -339,11 +339,22 @@ def get_terminal_email_ids(session: Session, email_ids: list[str]) -> set[str]:
 def not_removed():
     """Rows the user did not remove with the dashboard's Remove button. Removed rows are
     kept in the table on purpose (the pipeline treats SKIPPED as done, so the email is never
-    re-added) but they are neither listed nor counted as votes: removing an email means "I don't
-    want this on my calendar", not "the model got it wrong". NULL-safe: most rows have no
-    error_message at all.
+    re-added) but are not listed. Removing is not a verdict ("I don't want this on my calendar" is
+    not "the model got it wrong"), so it records no vote; see explicit_votes_only for the stats.
+    NULL-safe: most rows have no error_message at all.
     """
     return ProcessedEmail.error_message.is_(None) | ProcessedEmail.error_message.not_in(_REMOVED_MESSAGES)
+
+
+def explicit_votes_only():
+    """Filter for the correction-rate statistics: skip rows whose "incorrect" vote was written
+    automatically by the old Remove button (identified by its legacy message). A removal made
+    now records no vote at all, and a user's explicit Correct / Incorrect vote counts even if the
+    row was removed afterwards.
+    """
+    return ProcessedEmail.error_message.is_(None) | (
+        ProcessedEmail.error_message != _LEGACY_REMOVED_BY_USER_MESSAGE
+    )
 
 
 def _recent_emails_filter():
@@ -437,7 +448,12 @@ def reschedule_email(
     Calendar event itself is patched by the caller (calendar_client.
     update_event) — this just keeps our audit record in sync with it.
     Stays COMPLETED with the same calendar_event_id (same event, corrected
-    time), marked as an acknowledged correction.
+    time).
+
+    Rescheduling is NOT a verdict on the extraction: the user may simply want a different
+    time for their own reasons. user_correction is left untouched; "the extraction was wrong"
+    is the separate, explicit Incorrect vote (see set_correction), which can be recorded
+    before or after a reschedule.
     """
     row = session.get(ProcessedEmail, email_id)
     if row is None:
@@ -448,7 +464,6 @@ def reschedule_email(
     row.extraction_deadline_parsed = new_deadline
     row.extraction_deadline_raw = new_deadline.isoformat()
     row.extraction_has_time = has_time
-    row.user_correction = False
     session.commit()
     session.refresh(row)
     return row
@@ -569,12 +584,12 @@ def get_latest_run(session: Session) -> PipelineRun | None:
 
 def get_correction_rate(session: Session) -> float | None:
     """Fraction of reviewed extractions marked correct. None if nothing's been reviewed yet."""
-    # Removed items are not votes (see not_removed).
+    # Rows whose vote the old Remove button wrote automatically are not real votes.
     total_stmt = select(func.count()).select_from(ProcessedEmail).where(
-        ProcessedEmail.user_correction.is_not(None), not_removed()
+        ProcessedEmail.user_correction.is_not(None), explicit_votes_only()
     )
     correct_stmt = select(func.count()).select_from(ProcessedEmail).where(
-        ProcessedEmail.user_correction.is_(True), not_removed()
+        ProcessedEmail.user_correction.is_(True), explicit_votes_only()
     )
     total = session.execute(total_stmt).scalar_one()
     if total == 0:

@@ -163,22 +163,14 @@ def correct_email(
     is_correct: bool = Form(...),
     db: Session = Depends(get_db),
 ):
-    """Plain correct/incorrect audit flag — for rows with no live Calendar
-    event (skipped/failed/declined items). For a row that *does* have one,
-    the frontend routes "wrong" through /reschedule or /remove instead, so
-    marking it wrong always keeps the calendar in sync with the verdict.
+    """Plain correct/incorrect verdict. It records the vote and nothing else: it never
+    touches the Calendar, even on a row with a live event. Reschedule and Remove are
+    separate actions that change the event; Incorrect and Reschedule can be used together
+    (the vote says the extraction was wrong, Reschedule fixes the time).
     """
     row = db.get(ProcessedEmail, email_id)
     if row is None:
         raise HTTPException(status_code=404, detail="No such email")
-    if row.calendar_event_id and not is_correct:
-        # "Correct" needs no calendar action, so it's always fine here —
-        # only "wrong" must go through /reschedule or /remove instead, so
-        # a live event is never left stale after a wrong verdict.
-        raise HTTPException(
-            status_code=400,
-            detail="This item has a live Calendar event — use /reschedule or /remove instead",
-        )
 
     row = repository.set_correction(db, email_id, is_correct)
     return templates.TemplateResponse(request, "_row.html", {"email": row})
