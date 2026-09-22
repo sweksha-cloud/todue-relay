@@ -44,7 +44,7 @@
           <input type="datetime-local" name="new_datetime" required style="font-size:0.75rem; padding:2px;">
           <button class="vote" type="submit" title="Add it to your calendar at a time you choose (its date is wrong, or it has none)">📅 Reschedule</button>
         </form>
-        <button class="vote" hx-post="/emails/{{ email.email_id }}/decline" hx-swap="none" title="Leave it off your calendar">✗ Deny</button>
+        <button class="vote" hx-post="/emails/{{ email.email_id }}/decline" hx-swap="none" title="Leave it off your calendar">✗ Dismiss</button>
       </div>
     {% elif email.calendar_event_id %}
       {# Live Calendar event. Reschedule and Remove stay available whether or not a verdict has been recorded.

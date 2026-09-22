@@ -7,6 +7,6 @@
       <input type="datetime-local" name="new_datetime" required style="font-size:0.75rem; padding:2px;">
       <button class="vote" type="submit" title="Create a Calendar event at this date and time">📅 Schedule</button>
     </form>
-    <button class="vote" hx-post="/emails/{{ item.email_id }}/decline" hx-swap="none" title="Not worth acting on">✗ Deny</button>
+    <button class="vote" hx-post="/emails/{{ item.email_id }}/decline" hx-swap="none" title="Not worth acting on">✗ Dismiss</button>
   </div>
 </li>

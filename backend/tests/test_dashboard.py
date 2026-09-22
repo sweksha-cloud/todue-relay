@@ -743,7 +743,7 @@ class TestDecisionsMoveAnEmailBetweenSections:
         assert 'hx-swap="none"' in page
 
 
-class TestNeedsReviewOffersApproveRescheduleAndDeny:
+class TestNeedsReviewOffersApproveRescheduleAndDismiss:
     def _held_back_without_a_date(self, db, email_id="nodate", subject="Vague deadline"):
         repository.try_claim_email(db, email_id, f"t-{email_id}", subject)
         repository.mark_completed(
@@ -760,7 +760,7 @@ class TestNeedsReviewOffersApproveRescheduleAndDeny:
 
         assert "/emails/r1/approve" in html and "Approve" in html
         assert "/emails/r1/approve-at" in html and "Reschedule" in html and 'type="datetime-local"' in html
-        assert "/emails/r1/decline" in html and "Deny" in html
+        assert "/emails/r1/decline" in html and "Dismiss" in html
         assert "Don't add" not in html and "Don&#39;t add" not in html
 
     def test_an_item_with_no_date_cannot_be_approved_so_it_is_not_offered_but_can_be_rescheduled(self, client, db_session):
@@ -814,7 +814,7 @@ class TestNeedsReviewOffersApproveRescheduleAndDeny:
         assert "Workshop signup" in _section(page, "skipped") and "Workshop signup" not in _section(page, "needs_review")
 
 
-class TestActionItemDeny:
+class TestActionItemDismiss:
     """Alongside Schedule, an action item can be denied — the item leaves the list, and nothing
     is ever created on the calendar for it (it isn't 'wrong', there's just nothing to do)."""
 
@@ -840,7 +840,7 @@ class TestActionItemDeny:
         html = client.get("/").text
 
         assert "/emails/a1/schedule" in html
-        assert "/emails/a1/decline" in html and "Deny" in html
+        assert "/emails/a1/decline" in html and "Dismiss" in html
 
     def test_denying_an_unknown_action_item_is_a_404(self, client):
         assert client.post("/emails/nope/decline").status_code == 404
