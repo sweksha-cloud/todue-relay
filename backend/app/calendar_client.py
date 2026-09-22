@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from app.config import EVENT_DURATION_MINUTES
 from app.date_utils import detect_local_timezone
@@ -102,5 +103,17 @@ def update_event(
 def delete_event(service, event_id: str, calendar_id: str = "primary") -> None:
     """Remove an already-created event — the "remove from calendar" side of
     marking an auto-created event wrong on the dashboard.
+
+    Idempotent: if the event is already gone (deleted directly in Calendar, or a retry after a
+    previous delete that succeeded on Google's side but whose response was lost), the API answers
+    404 or 410 ("Resource has been deleted") instead of succeeding again. Remove's actual goal —
+    no such event exists — is already true either way, so that is treated as success rather than
+    left to bubble up as a 500 that leaves the database row (and so the dashboard) never catching
+    up: a real incident (2026-09-22) where two already-deleted duplicate events made every Remove
+    click on their rows crash and the rows stayed listed forever.
     """
-    service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+    try:
+        service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+    except HttpError as e:
+        if e.resp.status not in (404, 410):
+            raise

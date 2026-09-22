@@ -72,42 +72,7 @@
 </div>
 
 {% for s in sections %}
-<details class="card section" {% if s.category.open_by_default %}open{% endif %} id="section-{{ s.category.key }}">
-  <summary>
-    <strong>{{ s.category.title }}</strong>
-    <span class="badge {{ 'badge-review' if s.category.key in ('needs_review', 'marked_incorrect') and s.total else ('badge-failed' if s.category.key == 'failed' else 'badge-skipped') }}">{{ s.total }}</span>
-  </summary>
-  <div class="section-body overflow-x">
-    <p class="verdict" style="margin-top:0;">{{ s.category.blurb }}</p>
-    {% if s.rows %}
-    <table>
-      <thead>
-        <tr>
-          <th>Subject</th>
-          <th>What</th>
-          <th>When</th>
-          <th>Processed</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for email in s.rows %}
-          {% include "_row.html" %}
-        {% endfor %}
-      </tbody>
-    </table>
-    {% else %}
-      <p class="verdict">Nothing here.</p>
-    {% endif %}
-    {% if s.pages > 1 %}
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px; font-size:0.85rem;">
-        {% if s.newer_url %}<a href="{{ s.newer_url }}#section-{{ s.category.key }}">&larr; Newer</a>{% else %}<span></span>{% endif %}
-        <span class="verdict">Page {{ s.page }} of {{ s.pages }}</span>
-        {% if s.older_url %}<a href="{{ s.older_url }}#section-{{ s.category.key }}">Older &rarr;</a>{% else %}<span></span>{% endif %}
-      </div>
-    {% endif %}
-  </div>
-</details>
+  {% include "_section.html" %}
 {% endfor %}
 
 <div class="card">
@@ -147,5 +112,10 @@
     </div>
   {% endif %}
 </div>
+
+{% if skipped_section %}
+  {% set s = skipped_section %}
+  {% include "_section.html" %}
+{% endif %}
 
 {% endblock %}

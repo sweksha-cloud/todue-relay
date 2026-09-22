@@ -611,6 +611,26 @@ class TestCategorySections:
 
         assert page.index('id="section-in_progress"') < page.index('id="section-skipped"')
 
+    def test_denied_or_skipped_renders_below_the_action_items_panel(self, client, db_session):
+        self._everything(db_session)
+
+        page = client.get("/").text
+
+        assert page.index(">Action items<") < page.index('id="section-skipped"')
+        assert 'id="section-skipped"' not in _section(page, "needs_review")  # still a real, complete section
+
+    def test_denied_or_skipped_still_pages_and_links_back_to_itself(self, client, db_session):
+        for i in range(30):
+            _completed_row(db_session, f"d{i:02d}", subject=f"Declined {i:02d}", event_id=None)
+            repository.mark_skipped(db_session, f"d{i:02d}", "declined by user")
+
+        page = client.get("/").text
+
+        assert _section(page, "skipped").count('id="row-d') == 25
+        assert "Page 1 of 2" in _section(page, "skipped")
+        second = client.get("/?p_skipped=2").text
+        assert _section(second, "skipped").count('id="row-d') == 5
+
     def test_the_two_working_sections_always_show_and_say_so_when_empty(self, client):
         page = client.get("/").text
 

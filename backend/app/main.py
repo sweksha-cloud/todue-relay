@@ -71,6 +71,27 @@ def _refresh() -> HTMLResponse:
     return HTMLResponse(content="", headers={"HX-Refresh": "true"})
 
 
+def _build_section(db: Session, request: Request, category: "categories.Category") -> dict | None:
+    """One category's rows, page and paging links — or None if it has nothing and is allowed to
+    stay hidden when empty. Its own function so "skipped" can be built and placed separately from
+    the rest (see the dashboard route)."""
+    total = repository.count_category(db, category.key)
+    if total == 0 and not category.show_when_empty:
+        return None
+    pages = max(1, -(-total // SECTION_PAGE_SIZE))  # ceil div
+    param = f"p_{category.key}"
+    page = _page_param(request, param, pages)
+    return {
+        "category": category,
+        "rows": repository.list_category(db, category.key, limit=SECTION_PAGE_SIZE, offset=(page - 1) * SECTION_PAGE_SIZE),
+        "total": total,
+        "page": page,
+        "pages": pages,
+        "newer_url": _url_with(request, **{param: page - 1}) if page > 1 else None,
+        "older_url": _url_with(request, **{param: page + 1}) if page < pages else None,
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(
     request: Request,
@@ -79,27 +100,21 @@ def dashboard(
 ):
     # The emails, grouped by the decision made about each (app/categories.py). Each section pages on its own
     # (?p_<key>=N); the two working sections always show, the others only when they have something.
+    # "skipped" is built and rendered separately, after Action Items, on purpose: it's the least
+    # useful section to see first, and the user asked for it to sit below Action Items specifically,
+    # not just last among the others.
     sections = []
+    skipped_section = None
     for category in categories.CATEGORIES:
         if not category.visible_in_dashboard:
             continue  # e.g. marked_correct: tracked for the stats, never shown once confirmed right
-        total = repository.count_category(db, category.key)
-        if total == 0 and not category.show_when_empty:
+        built = _build_section(db, request, category)
+        if built is None:
             continue
-        pages = max(1, -(-total // SECTION_PAGE_SIZE))  # ceil div
-        param = f"p_{category.key}"
-        page = _page_param(request, param, pages)
-        sections.append(
-            {
-                "category": category,
-                "rows": repository.list_category(db, category.key, limit=SECTION_PAGE_SIZE, offset=(page - 1) * SECTION_PAGE_SIZE),
-                "total": total,
-                "page": page,
-                "pages": pages,
-                "newer_url": _url_with(request, **{param: page - 1}) if page > 1 else None,
-                "older_url": _url_with(request, **{param: page + 1}) if page < pages else None,
-            }
-        )
+        if category.key == "skipped":
+            skipped_section = built
+        else:
+            sections.append(built)
 
     total_action_items = repository.count_action_items(db)
     total_action_pages = max(1, -(-total_action_items // ACTION_ITEMS_PAGE_SIZE))
@@ -126,6 +141,7 @@ def dashboard(
         "index.html",
         {
             "sections": sections,
+            "skipped_section": skipped_section,
             "action_items_recent": action_items_recent,
             "action_items_older": action_items_older,
             "action_items_older_count": action_items_older_count,

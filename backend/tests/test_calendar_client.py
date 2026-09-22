@@ -1,7 +1,15 @@
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+from googleapiclient.errors import HttpError
+
 from app.calendar_client import build_event_body, create_event, delete_event, update_event
+
+
+def _http_error(status: int) -> HttpError:
+    return HttpError(resp=SimpleNamespace(status=status, reason="x"), content=b"{}")
 
 
 class TestBuildEventBody:
@@ -86,3 +94,21 @@ class TestEventOperations:
         delete_event(service, "existing-id")
 
         service.events().delete.assert_called_with(calendarId="primary", eventId="existing-id")
+
+    @pytest.mark.parametrize("status", [404, 410])
+    def test_deleting_an_already_gone_event_is_treated_as_success(self, status):
+        """A retry, or an event someone already deleted directly in Calendar, must not crash
+        Remove and leave the dashboard row stuck forever (a real 2026-09-22 incident: a 410 on
+        two already-deleted duplicate events made every Remove click on them fail)."""
+        service = MagicMock()
+        service.events().delete().execute.side_effect = _http_error(status)
+
+        delete_event(service, "already-gone")  # must not raise
+
+    @pytest.mark.parametrize("status", [400, 401, 403, 500, 503])
+    def test_a_real_delete_failure_still_raises(self, status):
+        service = MagicMock()
+        service.events().delete().execute.side_effect = _http_error(status)
+
+        with pytest.raises(HttpError):
+            delete_event(service, "some-id")
