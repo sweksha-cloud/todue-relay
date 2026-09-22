@@ -1,5 +1,11 @@
 """Cheap keyword/pattern pre-filter, run before any email is sent to the LLM.
 
+Despite the name, extraction covers more than deadlines — a "needs_reply" or "unclear"
+action item is a valid outcome too (app/prompts.py). So this filter's job is to gate
+anything actionable-shaped enough to be worth the LLM's judgment, not deadlines alone:
+the action-verb signal below ("submit", "confirm", "register"...) exists specifically to
+catch task-shaped emails that carry no date at all.
+
 Goal: cut the volume of emails that reach the (paid, slower) extraction step
 without silently deciding how aggressive that cut should be — see the
 tuning script in scripts/tune_filter.py and the note in README-ish form in
@@ -9,7 +15,7 @@ The filter works by scoring an email against three independent signal
 categories. A level then sets how many *distinct categories* must match for
 the email to pass:
 
-  - "loose"    -> 1 category required  (misses fewer deadlines, more LLM calls)
+  - "loose"    -> 1 category required  (misses fewer candidates, more LLM calls)
   - "moderate" -> 2 categories required (default starting point)
   - "strict"   -> 3 categories required (fewer LLM calls, more risk of missing one)
 """
@@ -77,7 +83,7 @@ def score_email(subject: str, body_text: str) -> dict:
     }
 
 
-def is_deadline_candidate(subject: str, body_text: str, level: str = FILTER_LEVEL) -> bool:
+def is_actionable_candidate(subject: str, body_text: str, level: str = FILTER_LEVEL) -> bool:
     if level not in LEVEL_THRESHOLDS:
         raise ValueError(f"Unknown filter level {level!r}; choose from {list(LEVEL_THRESHOLDS)}")
 

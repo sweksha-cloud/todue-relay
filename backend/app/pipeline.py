@@ -35,7 +35,7 @@ from app.date_utils import has_explicit_time, is_plausible
 from app.db import repository
 from app.db.models import ProcessedEmail, RunStatus
 from app.db.session import get_session
-from app.filters import contains_reschedule_language, is_deadline_candidate
+from app.filters import contains_reschedule_language, is_actionable_candidate
 from app.gmail_client import fetch_messages_by_ids, fetch_recent_messages, get_gmail_service
 from app import alerts
 from app.llm_client import LLMTransientError, extract_deadline
@@ -270,7 +270,7 @@ def _claim_and_process(session, email, *, over_budget: bool = False, dry_run: bo
         # signal, and would otherwise confound the anomaly flag.
         return "skipped"
 
-    if not is_deadline_candidate(email.subject, email.body_text):
+    if not is_actionable_candidate(email.subject, email.body_text):
         return "filtered_out"  # pre-filter: never even claimed, cheapest possible skip
 
     if over_budget:

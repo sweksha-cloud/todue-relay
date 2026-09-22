@@ -35,7 +35,7 @@ class TestClaimAndProcessSkipsCalendarInvites:
         assert result == "skipped"
 
     def test_non_invite_email_still_reaches_the_claim_step(self):
-        """Sanity check the test setup itself: a plain deadline-shaped
+        """Sanity check the test setup itself: a plain actionable-shaped
         email is NOT short-circuited by the invite check, and does try to
         reach the (here, deliberately broken) claim step — proves the
         invite-skip test above is actually exercising the early-return

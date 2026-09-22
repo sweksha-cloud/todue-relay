@@ -1,4 +1,4 @@
-from app.filters import contains_reschedule_language, is_deadline_candidate, score_email
+from app.filters import contains_reschedule_language, is_actionable_candidate, score_email
 
 
 class TestScoreEmail:
@@ -29,7 +29,7 @@ class TestScoreEmail:
 class TestIsDeadlineCandidate:
     def test_moderate_requires_two_signals(self):
         # keyword + action_verb, no clean date_pattern -> passes at moderate (>=2)
-        assert is_deadline_candidate(
+        assert is_actionable_candidate(
             "Assignment 3 due Friday",
             "Please submit your assignment by 11:59pm.",
             level="moderate",
@@ -37,12 +37,12 @@ class TestIsDeadlineCandidate:
 
     def test_single_signal_fails_moderate_but_passes_loose(self):
         subject, body = "RSVP for the club social", "Let us know by Monday if you are coming."
-        assert is_deadline_candidate(subject, body, level="moderate") is False
-        assert is_deadline_candidate(subject, body, level="loose") is True
+        assert is_actionable_candidate(subject, body, level="moderate") is False
+        assert is_actionable_candidate(subject, body, level="loose") is True
 
     def test_strict_requires_all_three(self):
         # keyword + action_verb only, no date_pattern -> fails strict (needs 3)
-        assert is_deadline_candidate(
+        assert is_actionable_candidate(
             "Assignment due",
             "Please submit your assignment.",
             level="strict",
@@ -52,7 +52,7 @@ class TestIsDeadlineCandidate:
         import pytest
 
         with pytest.raises(ValueError):
-            is_deadline_candidate("x", "y", level="nonsense")
+            is_actionable_candidate("x", "y", level="nonsense")
 
 
 class TestContainsRescheduleLanguage:
