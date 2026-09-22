@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query
 from fastapi.requests import Request
@@ -15,10 +14,10 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from app import calendar_client, categories, metrics, pipeline, review_actions
-from app.date_utils import detect_local_timezone, to_local
+from app import categories, metrics, pipeline, review_actions
+from app.date_utils import parse_local_wallclock, to_local
 from app.db import repository
-from app.db.models import ActionType, Base, ProcessedEmail, ProcessingStatus
+from app.db.models import Base
 from app.db.session import engine, get_db
 from app.view_helpers import (
     ACTION_TYPE_BADGE_CLASS,
@@ -290,28 +289,14 @@ def reschedule_email(
     """The "wrong, but here's the right time" path — patches the existing
     Calendar event in place rather than just recording a flag.
     """
-    row = db.get(ProcessedEmail, email_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="No such email")
-    if not row.calendar_event_id:
-        raise HTTPException(status_code=400, detail="No live Calendar event to reschedule")
-
     try:
-        naive = datetime.fromisoformat(new_datetime)
+        new_deadline = parse_local_wallclock(new_datetime)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date/time")
-    new_deadline = naive.replace(tzinfo=ZoneInfo(detect_local_timezone()))
-
-    service = calendar_client.get_calendar_service()
-    calendar_client.update_event(
-        service,
-        event_id=row.calendar_event_id,
-        summary=row.extraction_event_name or row.email_subject,
-        description=row.extraction_source_context or "",
-        deadline=new_deadline,
-        has_time=True,
-    )
-    row = repository.reschedule_email(db, email_id, new_deadline, has_time=True)
+    try:
+        review_actions.reschedule_event(db, email_id, new_deadline)
+    except review_actions.ActionError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
     return _refresh()
 
 
@@ -326,28 +311,14 @@ def schedule_action_item(
     list, where it behaves like any scheduled deadline (Reschedule / Remove). The response
     is empty with HX-Refresh so the page reloads and the item appears in its new place.
     """
-    row = db.get(ProcessedEmail, email_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="No such email")
-    is_action_item = row.extraction_action_type in (ActionType.NEEDS_REPLY, ActionType.UNCLEAR)
-    if not is_action_item or row.status != ProcessingStatus.COMPLETED or row.calendar_event_id:
-        raise HTTPException(status_code=400, detail="Not an unscheduled action item")
-
     try:
-        naive = datetime.fromisoformat(new_datetime)
+        deadline = parse_local_wallclock(new_datetime)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date/time")
-    deadline = naive.replace(tzinfo=ZoneInfo(detect_local_timezone()))
-
-    service = calendar_client.get_calendar_service()
-    event_id = calendar_client.create_event(
-        service,
-        summary=row.extraction_event_name or row.email_subject,
-        description=row.extraction_source_context or "",
-        deadline=deadline,
-        has_time=True,
-    )
-    repository.schedule_action_item(db, email_id, deadline, event_id)
+    try:
+        review_actions.schedule_action_item(db, email_id, deadline)
+    except review_actions.ActionError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
     return HTMLResponse(content="", headers={"HX-Refresh": "true"})
 
 
@@ -394,10 +365,9 @@ def approve_email_at(email_id: str, new_datetime: str = Form(...), db: Session =
     """"Reschedule" on an item needing review: add it to the calendar at a time the person picks, for when
     the time the pipeline extracted is wrong or missing."""
     try:
-        naive = datetime.fromisoformat(new_datetime)
+        deadline = parse_local_wallclock(new_datetime)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date/time")
-    deadline = naive.replace(tzinfo=ZoneInfo(detect_local_timezone()))
     try:
         review_actions.approve_at(db, email_id, deadline)
     except review_actions.ActionError as e:

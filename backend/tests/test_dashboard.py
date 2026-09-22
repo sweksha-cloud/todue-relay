@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from app.db import repository
 from app.db.models import ProcessedEmail, ProcessingStatus, RunStatus
 from app.schemas import ExtractionResult
-from app import main, metrics, pipeline
+from app import calendar_client, date_utils, main, metrics, pipeline
 from app.db.session import get_db
 from app.main import app
 
@@ -166,8 +166,8 @@ def _completed_row(db_session, email_id="e1", subject="Nominations due", event_i
 def calendar_calls(monkeypatch):
     """Stub the Calendar API: record what the dashboard asks it to do."""
     calls = {"deleted": [], "created": []}
-    monkeypatch.setattr(main.calendar_client, "get_calendar_service", lambda: object())
-    monkeypatch.setattr(main.calendar_client, "delete_event", lambda service, event_id: calls["deleted"].append(event_id))
+    monkeypatch.setattr(calendar_client, "get_calendar_service", lambda: object())
+    monkeypatch.setattr(calendar_client, "delete_event", lambda service, event_id: calls["deleted"].append(event_id))
     return calls
 
 
@@ -253,10 +253,10 @@ def create_calls(monkeypatch):
         calls["created"].append(kwargs)
         return f"cal-new-{len(calls['created'])}"
 
-    monkeypatch.setattr(main.calendar_client, "get_calendar_service", lambda: object())
-    monkeypatch.setattr(main.calendar_client, "create_event", fake_create)
-    monkeypatch.setattr(main.calendar_client, "delete_event", lambda service, event_id: calls["deleted"].append(event_id))
-    monkeypatch.setattr(main, "detect_local_timezone", lambda: "America/Los_Angeles")
+    monkeypatch.setattr(calendar_client, "get_calendar_service", lambda: object())
+    monkeypatch.setattr(calendar_client, "create_event", fake_create)
+    monkeypatch.setattr(calendar_client, "delete_event", lambda service, event_id: calls["deleted"].append(event_id))
+    monkeypatch.setattr(date_utils, "CALENDAR_TIMEZONE", "America/Los_Angeles")
     return calls
 
 
@@ -396,10 +396,10 @@ class TestRemovedItemsAreNotVotes:
 def event_calls(monkeypatch):
     """Stub the Calendar: record updates and deletions to the event."""
     calls = {"updated": [], "deleted": []}
-    monkeypatch.setattr(main.calendar_client, "get_calendar_service", lambda: object())
-    monkeypatch.setattr(main.calendar_client, "update_event", lambda service, **kw: calls["updated"].append(kw))
-    monkeypatch.setattr(main.calendar_client, "delete_event", lambda service, event_id: calls["deleted"].append(event_id))
-    monkeypatch.setattr(main, "detect_local_timezone", lambda: "America/Los_Angeles")
+    monkeypatch.setattr(calendar_client, "get_calendar_service", lambda: object())
+    monkeypatch.setattr(calendar_client, "update_event", lambda service, **kw: calls["updated"].append(kw))
+    monkeypatch.setattr(calendar_client, "delete_event", lambda service, event_id: calls["deleted"].append(event_id))
+    monkeypatch.setattr(date_utils, "CALENDAR_TIMEZONE", "America/Los_Angeles")
     return calls
 
 
@@ -720,7 +720,7 @@ class TestDecisionsMoveAnEmailBetweenSections:
         assert repository.get_correction_rate(db_session) == 1.0
 
     def test_every_action_asks_the_browser_to_reload(self, client, db_session, calendar, monkeypatch):
-        monkeypatch.setattr(main.calendar_client, "update_event", lambda service, **kw: None)
+        monkeypatch.setattr(calendar_client, "update_event", lambda service, **kw: None)
         _completed_row(db_session, "r1", event_id=None)
         _completed_row(db_session, "c1", subject="Rent due", event_id="cal-1")
 
@@ -772,7 +772,7 @@ class TestNeedsReviewOffersApproveRescheduleAndDismiss:
         assert "/emails/nodate/approve-at" in html and "/emails/nodate/decline" in html
 
     def test_rescheduling_adds_it_at_the_chosen_local_time_and_moves_it_to_to_check(self, client, db_session, calendar, monkeypatch):
-        monkeypatch.setattr(main, "detect_local_timezone", lambda: "America/Los_Angeles")
+        monkeypatch.setattr(date_utils, "CALENDAR_TIMEZONE", "America/Los_Angeles")
         _completed_row(db_session, "r1", subject="Workshop signup", event_id=None)
 
         response = client.post("/emails/r1/approve-at", data={"new_datetime": "2026-10-05T14:30"})
@@ -783,7 +783,7 @@ class TestNeedsReviewOffersApproveRescheduleAndDismiss:
         assert "Workshop signup" in _section(page, "to_check") and "Workshop signup" not in _section(page, "needs_review")
 
     def test_an_item_with_no_date_can_be_added_by_rescheduling_it(self, client, db_session, calendar, monkeypatch):
-        monkeypatch.setattr(main, "detect_local_timezone", lambda: "America/Los_Angeles")
+        monkeypatch.setattr(date_utils, "CALENDAR_TIMEZONE", "America/Los_Angeles")
         self._held_back_without_a_date(db_session)
 
         client.post("/emails/nodate/approve-at", data={"new_datetime": "2026-10-05T09:00"})

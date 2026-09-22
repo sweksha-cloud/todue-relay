@@ -2,6 +2,7 @@
 (test_addon_auth.py covers it); this is about what the endpoint says."""
 
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -193,12 +194,12 @@ class TestWhichActionsAreOffered:
     def _actions(self, db, email_id):
         return available_actions(db.get(ProcessedEmail, email_id))
 
-    def test_an_item_needing_review_can_be_added_or_declined(self, db_session):
+    def test_an_item_needing_review_can_be_added_at_the_found_date_rescheduled_or_declined(self, db_session):
         _row(db_session, "r1", "Workshop", event_id=None, confidence="low")
 
-        assert self._actions(db_session, "r1") == ["approve", "decline"]
+        assert self._actions(db_session, "r1") == ["approve", "approve_at", "decline"]
 
-    def test_an_item_with_no_date_can_only_be_declined_because_there_is_nothing_to_create(self, db_session):
+    def test_an_item_with_no_date_can_still_be_rescheduled_or_declined_since_reschedule_needs_no_date(self, db_session):
         repository.try_claim_email(db_session, "nodate", "t", "Vague")
         repository.mark_completed(
             db_session, "nodate",
@@ -207,23 +208,28 @@ class TestWhichActionsAreOffered:
             calendar_event_id=None,
         )
 
-        assert self._actions(db_session, "nodate") == ["decline"]
+        assert self._actions(db_session, "nodate") == ["approve_at", "decline"]
 
-    def test_an_event_on_the_calendar_can_be_voted_on_and_removed(self, db_session):
+    def test_an_event_on_the_calendar_can_be_voted_on_rescheduled_or_removed(self, db_session):
         _row(db_session, "c1", "Rent due", event_id="cal-1")
 
-        assert self._actions(db_session, "c1") == ["vote_correct", "vote_incorrect", "remove"]
+        assert self._actions(db_session, "c1") == ["vote_correct", "vote_incorrect", "reschedule", "remove"]
 
-    def test_once_a_verdict_is_given_only_remove_is_left(self, db_session):
+    def test_once_a_verdict_is_given_reschedule_and_remove_are_still_offered_but_no_more_voting(self, db_session):
         _row(db_session, "c1", "Rent due", event_id="cal-1")
         repository.set_correction(db_session, "c1", False)
 
-        assert self._actions(db_session, "c1") == ["remove"]
+        assert self._actions(db_session, "c1") == ["reschedule", "remove"]
 
-    def test_action_items_have_no_actions_from_the_card_yet(self, db_session):
+    def test_action_items_can_be_scheduled_or_declined(self, db_session):
         _row(db_session, "a1", "Reply to advisor", event_id=None, action_type="needs_reply")
 
-        assert self._actions(db_session, "a1") == []
+        assert self._actions(db_session, "a1") == ["schedule", "decline"]
+
+    def test_an_unclear_action_item_can_also_be_scheduled_or_declined(self, db_session):
+        _row(db_session, "u1", "Not sure what this wants", event_id=None, action_type="unclear")
+
+        assert self._actions(db_session, "u1") == ["schedule", "decline"]
 
     def test_a_declined_item_offers_nothing(self, db_session):
         _row(db_session, "r1", "Workshop", event_id=None)
@@ -237,8 +243,8 @@ class TestWhichActionsAreOffered:
 
         body = client.get(URL).json()
 
-        assert body["needs_review"][0]["actions"] == ["approve", "decline"]
-        assert body["upcoming"][0]["actions"] == ["vote_correct", "vote_incorrect", "remove"]
+        assert body["needs_review"][0]["actions"] == ["approve", "approve_at", "decline"]
+        assert body["upcoming"][0]["actions"] == ["vote_correct", "vote_incorrect", "reschedule", "remove"]
 
 
 class TestTheActionEndpoints:
@@ -263,7 +269,7 @@ class TestTheActionEndpoints:
 
         assert response.json()["message"] == "Won't add this"
         assert response.json()["email"]["status"] == "skipped"
-        assert calendar == {"created": [], "deleted": []}
+        assert calendar == {"created": [], "updated": [], "deleted": []}
 
     def test_removing_deletes_the_real_event(self, client, db_session, calendar):
         _row(db_session, "c1", "Rent due", event_id="cal-9")
@@ -282,8 +288,8 @@ class TestTheActionEndpoints:
 
         assert response.json()["message"] == message
         assert response.json()["email"]["vote"] == expected
-        assert response.json()["email"]["actions"] == ["remove"]
-        assert calendar == {"created": [], "deleted": []}
+        assert response.json()["email"]["actions"] == ["reschedule", "remove"]
+        assert calendar == {"created": [], "updated": [], "deleted": []}
 
     def test_a_vote_must_be_correct_or_incorrect(self, client, db_session, calendar):
         _row(db_session, "c1", "Rent due", event_id="cal-1")
@@ -312,3 +318,86 @@ class TestTheActionEndpoints:
 
         assert self._post(client, "r1", "approve").status_code == 400
         assert len(calendar["created"]) == 1
+
+
+class TestTheDateTimeActionEndpoints:
+    """approve-at, reschedule and schedule — the three actions the add-on offers a date/time
+    field for, sharing parse_local_wallclock with the dashboard's <input type="datetime-local">."""
+
+    def _post(self, client, email_id, action, new_datetime="2026-10-05T14:30"):
+        return client.post(f"/api/addon/emails/{email_id}/{action}", json={"new_datetime": new_datetime})
+
+    def test_approve_at_creates_the_event_at_the_chosen_time_for_a_needs_review_item(self, client, db_session, calendar):
+        _row(db_session, "r1", "Workshop signup", event_id=None, confidence="low")
+
+        response = self._post(client, "r1", "approve-at")
+
+        assert response.status_code == 200
+        assert response.json()["message"] == "Added to your calendar"
+        assert response.json()["email"]["on_calendar"] is True
+        expected = datetime(2026, 10, 5, 14, 30, tzinfo=ZoneInfo("America/Los_Angeles"))
+        assert calendar["created"] == [dict(summary="Workshop signup", description="ctx", deadline=expected, has_time=True)]
+
+    def test_approve_at_works_even_with_no_extracted_date(self, client, db_session, calendar):
+        repository.try_claim_email(db_session, "nodate", "t", "Vague")
+        repository.mark_completed(
+            db_session, "nodate",
+            ExtractionResult(email_id="nodate", event_name="Vague", deadline_date_raw=None, deadline_date=None,
+                             source_context="c", confidence="low", action_type="deadline"),
+            calendar_event_id=None,
+        )
+
+        response = self._post(client, "nodate", "approve-at")
+
+        assert response.status_code == 200 and len(calendar["created"]) == 1
+
+    def test_reschedule_patches_the_live_event_in_place_and_keeps_any_vote(self, client, db_session, calendar):
+        _row(db_session, "c1", "Rent due", event_id="cal-1")
+        repository.set_correction(db_session, "c1", False)
+
+        response = self._post(client, "c1", "reschedule")
+
+        assert response.status_code == 200 and response.json()["message"] == "Rescheduled"
+        expected = datetime(2026, 10, 5, 14, 30, tzinfo=ZoneInfo("America/Los_Angeles"))
+        assert calendar["updated"] == [dict(event_id="cal-1", summary="Rent due", description="ctx", deadline=expected, has_time=True)]
+        assert calendar["created"] == []
+        assert db_session.get(ProcessedEmail, "c1").user_correction is False  # untouched
+
+    def test_reschedule_refuses_an_item_with_no_live_event(self, client, db_session, calendar):
+        _row(db_session, "r1", "Workshop", event_id=None, confidence="low")
+
+        response = self._post(client, "r1", "reschedule")
+
+        assert response.status_code == 400 and response.json()["detail"] == "No live Calendar event to reschedule"
+        assert calendar["updated"] == []
+
+    def test_schedule_creates_the_first_event_for_an_action_item(self, client, db_session, calendar):
+        _row(db_session, "a1", "Reply to advisor", event_id=None, action_type="needs_reply")
+
+        response = self._post(client, "a1", "schedule")
+
+        assert response.status_code == 200 and response.json()["message"] == "Added to your calendar"
+        assert response.json()["email"]["on_calendar"] is True
+        assert response.json()["email"]["actions"] == ["vote_correct", "vote_incorrect", "reschedule", "remove"]  # now behaves like any scheduled deadline
+        assert len(calendar["created"]) == 1
+
+    def test_schedule_refuses_a_normal_deadline_that_already_has_a_date(self, client, db_session, calendar):
+        _row(db_session, "d1", "Rent due", event_id=None)  # a deadline, not an action item
+
+        response = self._post(client, "d1", "schedule")
+
+        assert response.status_code == 400 and response.json()["detail"] == "Not an unscheduled action item"
+        assert calendar["created"] == []
+
+    @pytest.mark.parametrize("action", ["approve-at", "reschedule", "schedule"])
+    def test_an_invalid_datetime_is_a_400_and_touches_nothing(self, client, db_session, calendar, action):
+        _row(db_session, "r1", "Workshop", event_id="cal-1", action_type="needs_reply" if action == "schedule" else "deadline")
+
+        response = self._post(client, "r1", action, new_datetime="not-a-date")
+
+        assert response.status_code == 400 and response.json()["detail"] == "Invalid date/time"
+        assert calendar == {"created": [], "updated": [], "deleted": []}
+
+    @pytest.mark.parametrize("action", ["approve-at", "reschedule", "schedule"])
+    def test_an_unknown_email_is_a_404(self, client, calendar, action):
+        assert self._post(client, "nope", action).status_code == 404

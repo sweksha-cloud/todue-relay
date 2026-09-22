@@ -200,6 +200,19 @@ def to_local(dt: datetime | None) -> datetime | None:
     return dt.astimezone(ZoneInfo(detect_local_timezone()))
 
 
+def parse_local_wallclock(raw: str) -> datetime:
+    """Parse a person-picked date/time string — the dashboard's <input type="datetime-local">, or
+    the same free-form text typed into the add-on's card — as a moment in the configured local
+    timezone. Used by every "reschedule at a chosen time" action (approve-at, reschedule, schedule),
+    on both surfaces, so a date typed one way is never off by the local UTC offset on the other.
+
+    Raises ValueError (via datetime.fromisoformat) on anything unparseable; every caller turns that
+    into the same "Invalid date/time" 400, on both surfaces.
+    """
+    naive = datetime.fromisoformat(raw)
+    return naive.replace(tzinfo=ZoneInfo(detect_local_timezone()))
+
+
 class UnparseableDateError(ValueError):
     """Raised when a string claiming to be a date/time cannot be resolved to one."""
 

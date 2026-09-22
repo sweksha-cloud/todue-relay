@@ -50,7 +50,7 @@ def calendar(monkeypatch):
     that an action reached the calendar and that a refused one did not."""
     from app import calendar_client
 
-    calls = {"created": [], "deleted": []}
+    calls = {"created": [], "updated": [], "deleted": []}
 
     def fake_create(service, **kwargs):
         calls["created"].append(kwargs)
@@ -58,6 +58,7 @@ def calendar(monkeypatch):
 
     monkeypatch.setattr(calendar_client, "get_calendar_service", lambda: object())
     monkeypatch.setattr(calendar_client, "create_event", fake_create)
+    monkeypatch.setattr(calendar_client, "update_event", lambda service, **kwargs: calls["updated"].append(kwargs))
     monkeypatch.setattr(calendar_client, "delete_event", lambda service, event_id: calls["deleted"].append(event_id))
     return calls
 

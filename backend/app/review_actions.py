@@ -97,6 +97,46 @@ def approve_at(db: Session, email_id: str, deadline: datetime) -> ProcessedEmail
     return row
 
 
+def reschedule_event(db: Session, email_id: str, deadline: datetime) -> ProcessedEmail:
+    """The "wrong, but here's the right time" path for a row with a live Calendar event — patches
+    it in place rather than deleting and recreating. Leaves any recorded vote untouched: rescheduling
+    and voting are independent (docs/design-decisions.md, decision 15)."""
+    row = _get(db, email_id)
+    if not row.calendar_event_id:
+        raise ActionError(400, "No live Calendar event to reschedule")
+
+    service = calendar_client.get_calendar_service()
+    calendar_client.update_event(
+        service,
+        event_id=row.calendar_event_id,
+        summary=row.extraction_event_name or row.email_subject,
+        description=row.extraction_source_context or "",
+        deadline=deadline,
+        has_time=True,
+    )
+    return repository.reschedule_email(db, email_id, deadline, has_time=True)
+
+
+def schedule_action_item(db: Session, email_id: str, deadline: datetime) -> ProcessedEmail:
+    """An action item has no date, so no Calendar event yet. This creates one at a time the person
+    picked and moves the item out of Action Items into the regular list, where it behaves like any
+    other scheduled deadline (Reschedule / Remove)."""
+    row = _get(db, email_id)
+    is_action_item = row.extraction_action_type in (ActionType.NEEDS_REPLY, ActionType.UNCLEAR)
+    if not is_action_item or row.status != ProcessingStatus.COMPLETED or row.calendar_event_id:
+        raise ActionError(400, "Not an unscheduled action item")
+
+    service = calendar_client.get_calendar_service()
+    event_id = calendar_client.create_event(
+        service,
+        summary=row.extraction_event_name or row.email_subject,
+        description=row.extraction_source_context or "",
+        deadline=deadline,
+        has_time=True,
+    )
+    return repository.schedule_action_item(db, email_id, deadline, event_id)
+
+
 def decline(db: Session, email_id: str) -> ProcessedEmail:
     """The "don't add" side of the same checkmark: permanently skip, creating no Calendar event."""
     try:

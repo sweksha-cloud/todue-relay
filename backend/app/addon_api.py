@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app import review_actions
 from app.addon_auth import require_owner
-from app.date_utils import to_local
+from app.date_utils import parse_local_wallclock, to_local
 from app.db import repository
 from app.db.models import ActionType, ProcessedEmail, ProcessingStatus, RunStatus
 from app.db.session import get_db
@@ -84,14 +84,19 @@ def available_actions(row: ProcessedEmail) -> list[str]:
     """Which review actions make sense for this item right now. Decided here, not in the add-on, so
     the rule is tested Python and the add-on only draws the buttons it is told about."""
     if row.calendar_event_id:
-        actions = ["remove"]
+        actions = ["reschedule", "remove"]
         if row.user_correction is None:  # a verdict is given once, as on the dashboard
             actions = ["vote_correct", "vote_incorrect", *actions]
         return actions
     is_deadline = row.extraction_action_type in (None, ActionType.DEADLINE)
     if row.status == ProcessingStatus.COMPLETED and is_deadline:  # "needs review"
-        return (["approve"] if row.extraction_deadline_parsed else []) + ["decline"]
-    return []  # action items, skipped, failed and in-progress rows: nothing to do from the card yet
+        # approve_at works whether the extracted date is wrong or missing entirely, so it is
+        # always offered here; approve (at the extracted date) only when there is one to use.
+        return (["approve"] if row.extraction_deadline_parsed else []) + ["approve_at", "decline"]
+    is_action_item = row.extraction_action_type in (ActionType.NEEDS_REPLY, ActionType.UNCLEAR)
+    if row.status == ProcessingStatus.COMPLETED and is_action_item:
+        return ["schedule", "decline"]
+    return []  # skipped, failed and in-progress rows: nothing to do from the card yet
 
 
 def email_view(row: ProcessedEmail) -> EmailView:
@@ -149,6 +154,13 @@ class VoteBody(BaseModel):
     vote: Literal["correct", "incorrect"]
 
 
+class DateTimeBody(BaseModel):
+    # A plain string, not pydantic's datetime type, parsed with the same parse_local_wallclock the
+    # dashboard's <input type="datetime-local"> goes through — so a malformed value gets the same
+    # 400 "Invalid date/time" on both surfaces, instead of FastAPI's generic validation-error shape.
+    new_datetime: str
+
+
 class ActionResult(BaseModel):
     ok: bool
     message: str  # what to tell the person, e.g. "Added to your calendar"
@@ -161,6 +173,15 @@ def _run(action, message: str, *args) -> ActionResult:
     except review_actions.ActionError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
     return ActionResult(ok=True, message=message, email=email_view(row))
+
+
+def _run_at(action, message: str, db: Session, email_id: str, body: DateTimeBody) -> ActionResult:
+    """Like _run, for the three actions that take a person-chosen date/time."""
+    try:
+        deadline = parse_local_wallclock(body.new_datetime)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date/time") from None
+    return _run(action, message, db, email_id, deadline)
 
 
 @router.post("/emails/{email_id}/vote", response_model=ActionResult)
@@ -176,6 +197,13 @@ def approve(email_id: str, db: Session = Depends(get_db)) -> ActionResult:
     return _run(review_actions.approve, "Added to your calendar", db, email_id)
 
 
+@router.post("/emails/{email_id}/approve-at", response_model=ActionResult)
+def approve_at(email_id: str, body: DateTimeBody, db: Session = Depends(get_db)) -> ActionResult:
+    """"Reschedule" on an item needing review: add it to the calendar at a time the person chose, for
+    when the extracted date is wrong or missing entirely."""
+    return _run_at(review_actions.approve_at, "Added to your calendar", db, email_id, body)
+
+
 @router.post("/emails/{email_id}/decline", response_model=ActionResult)
 def decline(email_id: str, db: Session = Depends(get_db)) -> ActionResult:
     """Decline to add a held-back item: skipped for good, no calendar event."""
@@ -186,3 +214,17 @@ def decline(email_id: str, db: Session = Depends(get_db)) -> ActionResult:
 def remove(email_id: str, db: Session = Depends(get_db)) -> ActionResult:
     """Delete the item's real calendar event. The row is kept (so it is never re-added) but unlisted."""
     return _run(review_actions.remove_event, "Removed from your calendar", db, email_id)
+
+
+@router.post("/emails/{email_id}/reschedule", response_model=ActionResult)
+def reschedule(email_id: str, body: DateTimeBody, db: Session = Depends(get_db)) -> ActionResult:
+    """The "wrong, but here's the right time" path for a row with a live Calendar event — patches it
+    in place. Independent of a vote: rescheduling alone records no verdict."""
+    return _run_at(review_actions.reschedule_event, "Rescheduled", db, email_id, body)
+
+
+@router.post("/emails/{email_id}/schedule", response_model=ActionResult)
+def schedule(email_id: str, body: DateTimeBody, db: Session = Depends(get_db)) -> ActionResult:
+    """An action item has no date yet: create its first calendar event at the chosen time, moving it
+    out of the action-items list to behave like any other scheduled deadline."""
+    return _run_at(review_actions.schedule_action_item, "Added to your calendar", db, email_id, body)

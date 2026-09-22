@@ -43,7 +43,7 @@ class TestRecordVote:
 
         assert review_actions.record_vote(db_session, "e1", True).user_correction is True
         assert review_actions.record_vote(db_session, "e1", False).user_correction is False
-        assert calendar == {"created": [], "deleted": []}
+        assert calendar == {"created": [], "updated": [], "deleted": []}
 
     def test_an_unknown_email_is_a_404(self, db_session, calendar):
         assert _refused(review_actions.record_vote, db_session, "nope", True).status_code == 404
@@ -139,7 +139,7 @@ class TestDecline:
 
         assert declined.status == ProcessingStatus.SKIPPED
         assert "declined by user" in declined.error_message
-        assert calendar == {"created": [], "deleted": []}
+        assert calendar == {"created": [], "updated": [], "deleted": []}
         assert repository.count_needs_review(db_session) == 0
 
     def test_an_unknown_email_is_a_404(self, db_session, calendar):
@@ -271,6 +271,96 @@ class TestApproveAt:
 
     def test_an_unknown_email_is_a_404(self, db_session, calendar):
         assert _refused(review_actions.approve_at, db_session, "nope", self._chosen()).status_code == 404
+
+
+class TestRescheduleEvent:
+    """The "wrong, but here's the right time" path for a row that already has a live Calendar
+    event — patches it in place rather than deleting and recreating."""
+
+    def _chosen(self):
+        return datetime(2026, 10, 5, 14, 30, tzinfo=timezone.utc)
+
+    def test_patches_the_real_event_in_place(self, db_session, calendar):
+        _row(db_session, subject="Rent due", context="ctx", event_id="cal-1")
+
+        row = review_actions.reschedule_event(db_session, "e1", self._chosen())
+
+        assert calendar["updated"] == [
+            dict(event_id="cal-1", summary="Rent due", description="ctx", deadline=self._chosen(), has_time=True)
+        ]
+        assert calendar["created"] == []  # patched, not recreated
+        assert row.extraction_deadline_parsed == self._chosen()
+
+    def test_records_no_verdict_and_leaves_an_existing_one_untouched(self, db_session, calendar):
+        _row(db_session, event_id="cal-1")
+
+        assert review_actions.reschedule_event(db_session, "e1", self._chosen()).user_correction is None
+
+        review_actions.record_vote(db_session, "e1", False)
+        row = review_actions.reschedule_event(db_session, "e1", self._chosen() + timedelta(days=1))
+        assert row.user_correction is False  # the vote survives a second reschedule
+
+    def test_refuses_an_item_with_no_live_event_and_calls_nothing(self, db_session, calendar):
+        _row(db_session, event_id=None)
+
+        error = _refused(review_actions.reschedule_event, db_session, "e1", self._chosen())
+
+        assert (error.status_code, error.detail) == (400, "No live Calendar event to reschedule")
+        assert calendar["updated"] == []
+
+    def test_an_unknown_email_is_a_404(self, db_session, calendar):
+        assert _refused(review_actions.reschedule_event, db_session, "nope", self._chosen()).status_code == 404
+
+
+class TestScheduleActionItem:
+    """An action item has no date, so no Calendar event — this creates its first one at a time the
+    person chose, and moves it out of Action Items to behave like any other scheduled deadline."""
+
+    def _chosen(self):
+        return datetime(2026, 10, 5, 14, 30, tzinfo=timezone.utc)
+
+    def test_creates_the_first_event_and_records_it(self, db_session, calendar):
+        _row(db_session, subject="Reply to advisor", context="ctx", event_id=None, has_deadline=False, action_type="needs_reply")
+
+        row = review_actions.schedule_action_item(db_session, "e1", self._chosen())
+
+        sent = calendar["created"][0]
+        assert (sent["summary"], sent["description"], sent["deadline"]) == ("Reply to advisor", "ctx", self._chosen())
+        assert row.calendar_event_id == "new-event-id"
+        assert row.extraction_deadline_parsed == self._chosen()
+
+    def test_an_unclear_action_item_can_also_be_scheduled(self, db_session, calendar):
+        _row(db_session, event_id=None, has_deadline=False, action_type="unclear")
+
+        review_actions.schedule_action_item(db_session, "e1", self._chosen())
+
+        assert db_session.get(ProcessedEmail, "e1").calendar_event_id == "new-event-id"
+
+    def test_the_item_moves_out_of_action_items_into_the_regular_list(self, db_session, calendar):
+        _row(db_session, event_id=None, has_deadline=False, action_type="needs_reply")
+        assert repository.count_action_items(db_session) == 1
+
+        review_actions.schedule_action_item(db_session, "e1", self._chosen())
+
+        assert repository.count_action_items(db_session) == 0
+
+    @pytest.mark.parametrize(
+        "setup",
+        [
+            pytest.param(dict(event_id="cal-1", action_type="needs_reply"), id="already-scheduled"),
+            pytest.param(dict(event_id=None, action_type="deadline"), id="a-normal-deadline-not-an-action-item"),
+        ],
+    )
+    def test_refuses_what_is_not_an_unscheduled_action_item_and_calls_nothing(self, db_session, calendar, setup):
+        _row(db_session, **setup)
+
+        error = _refused(review_actions.schedule_action_item, db_session, "e1", self._chosen())
+
+        assert (error.status_code, error.detail) == (400, "Not an unscheduled action item")
+        assert calendar["created"] == []
+
+    def test_an_unknown_email_is_a_404(self, db_session, calendar):
+        assert _refused(review_actions.schedule_action_item, db_session, "nope", self._chosen()).status_code == 404
 
 
 class TestTrashEmail:
