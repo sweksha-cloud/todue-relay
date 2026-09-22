@@ -764,3 +764,41 @@ def list_parked_failures(session: Session, limit: int = 5) -> list[ProcessedEmai
     """Emails that failed for good, most recently failed first."""
     stmt = select(ProcessedEmail).where(_parked_filter()).order_by(ProcessedEmail.updated_at.desc()).limit(limit)
     return list(session.execute(stmt).scalars().all())
+
+
+def _category_filter(key: str):
+    """The SQL for one dashboard category (app/categories.py). Each is a slice of the same base list the
+    dashboard has always shown (_recent_emails_filter), split by the decision made about the email."""
+    if key == "needs_review":
+        return _needs_review_filter()
+    base = _recent_emails_filter()
+    on_calendar = ProcessedEmail.calendar_event_id.is_not(None)
+    if key == "to_check":
+        return base & on_calendar & ProcessedEmail.user_correction.is_(None)
+    if key == "marked_correct":
+        return base & on_calendar & ProcessedEmail.user_correction.is_(True)
+    if key == "marked_incorrect":
+        return base & on_calendar & ProcessedEmail.user_correction.is_(False)
+    if key == "skipped":
+        return base & (ProcessedEmail.status == ProcessingStatus.SKIPPED)
+    if key == "failed":
+        return base & (ProcessedEmail.status == ProcessingStatus.FAILED)
+    if key == "in_progress":
+        return base & (ProcessedEmail.status == ProcessingStatus.PROCESSING)
+    raise ValueError(f"Unknown category: {key!r}")
+
+
+def list_category(session: Session, key: str, limit: int = 25, offset: int = 0) -> list[ProcessedEmail]:
+    """One page of a dashboard category, most recently processed first."""
+    stmt = (
+        select(ProcessedEmail)
+        .where(_category_filter(key))
+        .order_by(ProcessedEmail.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
+def count_category(session: Session, key: str) -> int:
+    return session.execute(select(func.count()).select_from(ProcessedEmail).where(_category_filter(key))).scalar_one()

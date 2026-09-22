@@ -75,6 +75,12 @@
     button.vote { border: 1px solid var(--border); background: var(--card-bg); color: var(--text); border-radius: 6px; padding: 3px 8px; font-size: 0.8rem; cursor: pointer; margin-right: 4px; }
     button.vote:hover { background: var(--bg); }
     .verdict { font-size: 0.8rem; color: var(--muted); }
+    details.section { padding: 0; }
+    details.section > summary { cursor: pointer; padding: 14px 20px; list-style: none; display: flex; align-items: center; gap: 10px; font-size: 1.02rem; }
+    details.section > summary::-webkit-details-marker { display: none; }
+    details.section > summary::before { content: "\25B8"; color: var(--muted); font-size: 0.85rem; }
+    details.section[open] > summary::before { content: "\25BE"; }
+    details.section > .section-body { padding: 0 20px 16px; }
     .overflow-x { overflow-x: auto; }
     a { color: #1a6fd1; text-decoration: none; font-weight: 500; }
     a:hover { text-decoration: underline; }

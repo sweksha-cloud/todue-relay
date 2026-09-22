@@ -44,7 +44,9 @@ flowchart LR
    Items list.
 5. **Track** every email's outcome in Postgres (`app/db/`) for idempotency and an
    audit trail. It is safe to re-run: nothing is processed or created twice.
-6. **Review** on a small dashboard (`app/main.py`): approve or decline queued
+6. **Review** on a small dashboard (`app/main.py`), where emails are grouped by the
+   decision made about them (needs your review, on your calendar to check, marked
+   correct or incorrect, skipped or declined, failed): approve or decline queued
    items, schedule an action item onto the calendar, correct, reschedule or remove
    an auto-created event (a removed item leaves the list), and see run
    history, filter pass rate and Gemini usage on `/metrics`. A **Check waiting
@@ -206,7 +208,7 @@ TEST_DATABASE_URL=postgresql+psycopg://postgres:test@localhost:55432/testdb \
   python -m pytest tests/ -v
 ```
 
-360 tests across 21 files (plus 92 for the Gmail add-on), covering date and timezone parsing, pre-filter
+383 tests across 21 files (plus 92 for the Gmail add-on), covering date and timezone parsing, pre-filter
 scoring, LLM response validation (including 429 and 5xx handling), Calendar event
 construction (including recurrence), duplicate-deadline matching, the idempotency
 claim logic and retry cap, the daily call budget and dry-run mode (driving the
@@ -306,6 +308,7 @@ backend/
     main.py, view_helpers.py    # FastAPI dashboard
     addon_app.py, addon_api.py, addon_auth.py  # the add-on's own authenticated API (not the dashboard)
     review_actions.py           # vote / approve / decline / remove, shared by the dashboard and the add-on
+    categories.py               # the decision groups the dashboard sorts emails into
     templates/                  # dashboard HTML (Jinja2 + htmx)
     config.py                   # every setting, read from the environment
   scripts/
@@ -315,7 +318,7 @@ backend/
   requirements.txt              # full app (pipeline + dashboard)
   requirements-lambda.txt       # pipeline-only, for the Lambda package
   requirements-dev.txt
-  tests/                        # 360 tests, run against real Postgres
+  tests/                        # 383 tests, run against real Postgres
 addon/                          # Gmail add-on (Apps Script, TypeScript): a read-only home card
 docs/
   design-decisions.md           # 23 decisions: what else was considered, and the evidence

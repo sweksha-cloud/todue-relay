@@ -321,6 +321,28 @@ adds two more resources (and permissions for the deploy role) for a rare event; 
 failed-email count would fire on every transient blip, the noise decision 25 removed.
 
 
+### 27. The dashboard groups emails by the decision made about them
+**The problem.** One long table mixed everything: emails waiting on a decision, ones already checked and
+right, ones that failed. Nothing separated "needs me" from "done", so the useful rows were buried.
+**The groups.** Needs your review; on your calendar to check; marked incorrect; failed; marked correct;
+skipped or declined (and a rare in progress). The ones wanting a decision start open, the finished ones
+collapsed, each with a count. Action items keep their own panel and removed items stay hidden.
+**A partition, checked.** Every email the dashboard lists is in exactly one group. That is enforced by one
+definition (`app/categories.py`) with its queries beside the others, and a test that builds every state and
+checks nothing is lost or listed twice, so the groups cannot quietly disagree with the list they divide.
+**Why not tabs.** A first version filtered with tabs; it hid the sections behind clicks and was rejected.
+Stacked sections show everything at once and let the finished ones fold away. Each section pages on its own
+without resetting the others.
+**Why a button reloads the page.** An email that changes decision must move to another section, so
+swapping only its row (the old behaviour) would leave it in the wrong place. The button now asks the browser
+to reload, which keeps the query string and so the pages being viewed.
+**Reuse.** The Gmail add-on can show the same groups from the same definition, and already gets its buttons
+per item from the API.
+**Evidence.** 54 new tests (383 total), including the partition property; five deliberate breakages (a group
+swallowing another's emails, a button not reloading, paging one section resetting the rest, and more) were each
+caught by the test meant for it.
+
+
 ---
 
 ## Scaling to other users (a plan; not built)

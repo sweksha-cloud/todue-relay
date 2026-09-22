@@ -689,3 +689,85 @@ class TestParkedFailures:
         repository.unpark_transient_failures(db_session)
 
         assert repository.count_parked_failures(db_session) == 0
+
+
+class TestCategoriesPartitionTheDashboardList:
+    """Every email the dashboard lists is in exactly one category: none lost, none shown twice."""
+
+    def _make_every_state(self, db):
+        def done(email_id, event_id, action="deadline"):
+            repository.try_claim_email(db, email_id, f"t-{email_id}", f"Subject {email_id}")
+            repository.mark_completed(
+                db, email_id,
+                ExtractionResult(email_id=email_id, event_name=f"Event {email_id}", deadline_date_raw="Sep 24",
+                                 deadline_date=datetime.now(timezone.utc) + timedelta(days=2), source_context="c",
+                                 confidence="high", action_type=action),
+                calendar_event_id=event_id,
+            )
+
+        done("review", None)
+        done("review-voted", None)
+        repository.set_correction(db, "review-voted", False)  # a vote on something not on the calendar
+        done("check", "cal-1")
+        done("right", "cal-2")
+        repository.set_correction(db, "right", True)
+        done("wrong", "cal-3")
+        repository.set_correction(db, "wrong", False)
+        done("declined", None)
+        repository.mark_skipped(db, "declined", "declined by user")
+        done("removed", "cal-4")
+        repository.remove_calendar_event(db, "removed")  # hidden from the dashboard altogether
+        done("todo", None, action="needs_reply")  # an action item: its own panel
+        repository.try_claim_email(db, "broke", "t", "Subject broke")
+        repository.mark_failed(db, "broke", "ValueError: bad")
+        repository.try_claim_email(db, "busy", "t", "Subject busy")  # still PROCESSING
+        repository.try_claim_email(db, "invite", "t", "Subject invite")
+        repository.mark_skipped(db, "invite", "calendar invite")
+
+    def test_every_listed_email_is_in_exactly_one_category(self, db_session):
+        from app.categories import CATEGORY_KEYS
+
+        self._make_every_state(db_session)
+        listed = {r.email_id for r in repository.list_recent_emails(db_session, limit=1000)}
+
+        membership = {key: {r.email_id for r in repository.list_category(db_session, key, limit=1000)} for key in CATEGORY_KEYS}
+
+        assert set().union(*membership.values()) == listed  # none lost, nothing extra
+        assert sum(len(v) for v in membership.values()) == len(listed)  # none in two
+        assert repository.count_recent_emails(db_session) == len(listed)
+
+    def test_each_email_lands_where_its_decision_says(self, db_session):
+        self._make_every_state(db_session)
+
+        def ids(key):
+            return {r.email_id for r in repository.list_category(db_session, key, limit=1000)}
+
+        assert ids("needs_review") == {"review", "review-voted"}
+        assert ids("to_check") == {"check"}
+        assert ids("marked_correct") == {"right"}
+        assert ids("marked_incorrect") == {"wrong"}
+        assert ids("skipped") == {"declined", "invite"}
+        assert ids("failed") == {"broke"}
+        assert ids("in_progress") == {"busy"}
+
+    def test_the_counts_match_the_lists(self, db_session):
+        from app.categories import CATEGORY_KEYS
+
+        self._make_every_state(db_session)
+
+        for key in CATEGORY_KEYS:
+            assert repository.count_category(db_session, key) == len(repository.list_category(db_session, key, limit=1000))
+
+    def test_an_unknown_category_is_an_error_not_an_empty_list(self, db_session):
+        import pytest
+
+        with pytest.raises(ValueError):
+            repository.list_category(db_session, "nonsense")
+
+    def test_removed_emails_and_action_items_belong_to_no_category(self, db_session):
+        from app.categories import CATEGORY_KEYS
+
+        self._make_every_state(db_session)
+        everywhere = set().union(*[{r.email_id for r in repository.list_category(db_session, k, limit=1000)} for k in CATEGORY_KEYS])
+
+        assert "removed" not in everywhere and "todo" not in everywhere

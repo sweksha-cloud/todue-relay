@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from app import calendar_client, metrics, pipeline, review_actions
+from app import calendar_client, categories, metrics, pipeline, review_actions
 from app.date_utils import detect_local_timezone, to_local
 from app.db import repository
 from app.db.models import ActionType, Base, ProcessedEmail, ProcessingStatus
@@ -29,7 +29,7 @@ from app.view_helpers import (
 
 app = FastAPI(title="ToDue Relay")
 
-HISTORY_PAGE_SIZE = 25
+SECTION_PAGE_SIZE = 25
 ACTION_ITEMS_PAGE_SIZE = 25
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -49,24 +49,61 @@ def ensure_schema() -> None:
         Base.metadata.create_all(engine)
 
 
+def _url_with(request: Request, **params) -> str:
+    """This page's URL with some query parameters changed, the rest kept (so paging one section does not
+    reset another)."""
+    url = request.url.include_query_params(**params)
+    return f"{url.path}?{url.query}" if url.query else url.path
+
+
+def _page_param(request: Request, name: str, pages: int) -> int:
+    try:
+        page = int(request.query_params.get(name, "1"))
+    except ValueError:
+        page = 1
+    return min(max(page, 1), pages)
+
+
+def _refresh() -> HTMLResponse:
+    """The answer to a button press. The email may have moved to a different section, so ask the browser
+    (htmx) to reload the page rather than swap one row in place. The reload keeps the query string, so the
+    person stays on the pages they were looking at."""
+    return HTMLResponse(content="", headers={"HX-Refresh": "true"})
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(
     request: Request,
-    page: int = Query(1, ge=1),
     action_page: int = Query(1, ge=1),
     db: Session = Depends(get_db),
 ):
-    total_emails = repository.count_recent_emails(db)
-    total_pages = max(1, -(-total_emails // HISTORY_PAGE_SIZE))  # ceil div
-    page = min(page, total_pages)
-    offset = (page - 1) * HISTORY_PAGE_SIZE
+    # The emails, grouped by the decision made about each (app/categories.py). Each section pages on its own
+    # (?p_<key>=N); the two working sections always show, the others only when they have something.
+    sections = []
+    for category in categories.CATEGORIES:
+        total = repository.count_category(db, category.key)
+        if total == 0 and not category.show_when_empty:
+            continue
+        pages = max(1, -(-total // SECTION_PAGE_SIZE))  # ceil div
+        param = f"p_{category.key}"
+        page = _page_param(request, param, pages)
+        sections.append(
+            {
+                "category": category,
+                "rows": repository.list_category(db, category.key, limit=SECTION_PAGE_SIZE, offset=(page - 1) * SECTION_PAGE_SIZE),
+                "total": total,
+                "page": page,
+                "pages": pages,
+                "newer_url": _url_with(request, **{param: page - 1}) if page > 1 else None,
+                "older_url": _url_with(request, **{param: page + 1}) if page < pages else None,
+            }
+        )
 
     total_action_items = repository.count_action_items(db)
     total_action_pages = max(1, -(-total_action_items // ACTION_ITEMS_PAGE_SIZE))
     action_page = min(action_page, total_action_pages)
     action_offset = (action_page - 1) * ACTION_ITEMS_PAGE_SIZE
 
-    emails = repository.list_recent_emails(db, limit=HISTORY_PAGE_SIZE, offset=offset)
     action_items = repository.list_action_items(db, limit=ACTION_ITEMS_PAGE_SIZE, offset=action_offset)
     latest_run = repository.get_latest_run(db)
     parked_count = repository.count_parked_failures(db)
@@ -82,7 +119,7 @@ def dashboard(
         request,
         "index.html",
         {
-            "emails": emails,
+            "sections": sections,
             "action_items_by_day": action_items_by_day,
             "latest_run": latest_run,
             "parked_count": parked_count,
@@ -90,10 +127,10 @@ def dashboard(
             "correction_rate": correction_rate,
             "caught_this_week": caught_this_week,
             "llm_usage": llm_usage,
-            "page": page,
-            "total_pages": total_pages,
             "action_page": action_page,
             "total_action_pages": total_action_pages,
+            "action_newer_url": _url_with(request, action_page=action_page - 1) if action_page > 1 else None,
+            "action_older_url": _url_with(request, action_page=action_page + 1) if action_page < total_action_pages else None,
         },
     )
 
@@ -176,7 +213,7 @@ def correct_email(
         row = review_actions.record_vote(db, email_id, is_correct)
     except review_actions.ActionError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
-    return templates.TemplateResponse(request, "_row.html", {"email": row})
+    return _refresh()
 
 
 @app.post("/emails/{email_id}/reschedule", response_class=HTMLResponse)
@@ -211,7 +248,7 @@ def reschedule_email(
         has_time=True,
     )
     row = repository.reschedule_email(db, email_id, new_deadline, has_time=True)
-    return templates.TemplateResponse(request, "_row.html", {"email": row})
+    return _refresh()
 
 
 @app.post("/emails/{email_id}/schedule", response_class=HTMLResponse)
@@ -261,7 +298,7 @@ def remove_email(request: Request, email_id: str, db: Session = Depends(get_db))
         review_actions.remove_event(db, email_id)
     except review_actions.ActionError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
-    return HTMLResponse(content="")
+    return _refresh()
 
 
 @app.post("/emails/{email_id}/approve", response_class=HTMLResponse)
@@ -274,7 +311,7 @@ def approve_email(request: Request, email_id: str, db: Session = Depends(get_db)
         row = review_actions.approve(db, email_id)
     except review_actions.ActionError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
-    return templates.TemplateResponse(request, "_row.html", {"email": row})
+    return _refresh()
 
 
 @app.post("/emails/{email_id}/decline", response_class=HTMLResponse)
@@ -285,4 +322,4 @@ def decline_email(request: Request, email_id: str, db: Session = Depends(get_db)
         row = review_actions.decline(db, email_id)
     except review_actions.ActionError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
-    return templates.TemplateResponse(request, "_row.html", {"email": row})
+    return _refresh()

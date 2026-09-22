@@ -2,6 +2,7 @@
 Postgres. Only the DB dependency is swapped; the app and templates are real.
 """
 
+import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -21,6 +22,12 @@ def client(db_session):
     app.dependency_overrides[get_db] = lambda: db_session
     yield TestClient(app)  # no `with`: startup events (schema creation) don't run
     app.dependency_overrides.clear()
+
+
+def _section(html: str, key: str) -> str:
+    """The HTML of one category section on the main page (the <details> with id section-<key>), or ''."""
+    m = re.search(rf'<details[^>]*id="section-{key}".*?</details>', html, re.S)
+    return m.group(0) if m else ""
 
 
 def _finished_run(db_session, **overrides):
@@ -423,8 +430,10 @@ class TestIncorrectAndRescheduleOnALiveEvent:
     ):
         _completed_row(db_session)
 
-        html = client.post("/emails/e1/correct", data={"is_correct": "false"}).text
+        response = client.post("/emails/e1/correct", data={"is_correct": "false"})
 
+        assert response.headers["HX-Refresh"] == "true"  # the row moves section, so the page reloads
+        html = _section(client.get("/").text, "marked_incorrect")
         assert "Marked incorrect — choose reschedule or remove" in html  # tells the user what to do next
         assert "/emails/e1/reschedule" in html and "Reschedule" in html
         assert "/emails/e1/remove" in html
@@ -457,8 +466,9 @@ class TestIncorrectAndRescheduleOnALiveEvent:
     def test_a_correct_verdict_still_leaves_reschedule_and_remove_available(self, client, db_session, event_calls):
         _completed_row(db_session)
 
-        html = client.post("/emails/e1/correct", data={"is_correct": "true"}).text
+        client.post("/emails/e1/correct", data={"is_correct": "true"})
 
+        html = _section(client.get("/").text, "marked_correct")
         assert "Marked correct" in html
         assert "/emails/e1/reschedule" in html and "/emails/e1/remove" in html
 
@@ -529,3 +539,167 @@ class TestParkedEmailBanner:
         html = client.get("/").text
 
         assert "x" * 200 not in html
+
+
+class TestCategorySections:
+    """The main page groups emails by the decision made about each (app/categories.py)."""
+
+    def _fail(self, db, email_id, subject="A failed one", attempts=1):
+        repository.try_claim_email(db, email_id, f"t-{email_id}", subject)
+        repository.mark_failed(db, email_id, "ValueError: bad")
+        db.get(ProcessedEmail, email_id).attempt_count = attempts
+        db.commit()
+
+    def _everything(self, db):
+        _completed_row(db, "review", subject="Held back item", event_id=None)
+        _completed_row(db, "check", subject="Auto added item", event_id="cal-1")
+        _completed_row(db, "right", subject="Right item", event_id="cal-2")
+        repository.set_correction(db, "right", True)
+        _completed_row(db, "wrong", subject="Wrong item", event_id="cal-3")
+        repository.set_correction(db, "wrong", False)
+        _completed_row(db, "declined", subject="Declined item", event_id=None)
+        repository.mark_skipped(db, "declined", "declined by user")
+        self._fail(db, "broke", subject="Failed item")
+        _completed_row(db, "todo", subject="Reply to advisor", event_id=None, action_type="needs_reply")
+
+    def test_each_decision_lands_in_its_own_section_and_only_that_one(self, client, db_session):
+        self._everything(db_session)
+        page = client.get("/").text
+        expected = {
+            "needs_review": "Held back item", "to_check": "Auto added item", "marked_correct": "Right item",
+            "marked_incorrect": "Wrong item", "skipped": "Declined item", "failed": "Failed item",
+        }
+
+        for key, subject in expected.items():
+            assert subject in _section(page, key), f"{subject!r} should be under {key}"
+            for other in expected:
+                if other != key:
+                    assert subject not in _section(page, other), f"{subject!r} leaked into {other}"
+
+    def test_action_items_stay_in_their_own_panel_not_in_a_section(self, client, db_session):
+        self._everything(db_session)
+        page = client.get("/").text
+
+        assert "Reply to advisor" in page
+        assert not any("Reply to advisor" in _section(page, k) for k in ("needs_review", "to_check", "skipped", "failed"))
+
+    def test_sections_appear_in_priority_order_with_their_counts(self, client, db_session):
+        self._everything(db_session)
+        _completed_row(db_session, "check2", subject="Second auto added", event_id="cal-9")
+
+        page = client.get("/").text
+
+        order = [page.index(f'id="section-{k}"') for k in ("needs_review", "to_check", "marked_incorrect", "failed", "marked_correct", "skipped")]
+        assert order == sorted(order)
+        assert re.search(r"On your calendar: to check</strong>\s*<span[^>]*>2</span>", page)  # a true count, not a guess
+
+    def test_the_two_working_sections_always_show_and_say_so_when_empty(self, client):
+        page = client.get("/").text
+
+        assert 'id="section-needs_review"' in page and 'id="section-to_check"' in page
+        assert "Nothing here." in _section(page, "needs_review")
+        assert 'id="section-marked_correct"' not in page and 'id="section-failed"' not in page
+
+    def test_sections_wanting_a_decision_start_open_and_finished_ones_start_closed(self, client, db_session):
+        self._everything(db_session)
+        page = client.get("/").text
+
+        for key in ("needs_review", "to_check", "marked_incorrect", "failed"):
+            assert re.search(rf'<details[^>]*id="section-{key}"', _section(page, key)) and " open" in _section(page, key).split(">")[0]
+        for key in ("marked_correct", "skipped"):
+            assert " open" not in _section(page, key).split(">")[0]
+
+    def test_a_removed_email_appears_in_no_section(self, client, db_session, event_calls):
+        _completed_row(db_session, "gone", subject="Removed item")
+        client.post("/emails/gone/remove")
+
+        assert "Removed item" not in client.get("/").text
+
+    def test_each_section_pages_on_its_own_and_keeps_the_others_place(self, client, db_session):
+        for i in range(30):
+            _completed_row(db_session, f"c{i:02d}", subject=f"Check {i:02d}", event_id=f"cal-c{i}")
+        for i in range(30):
+            _completed_row(db_session, f"m{i:02d}", subject=f"Mark {i:02d}", event_id=f"cal-m{i}")
+            repository.set_correction(db_session, f"m{i:02d}", True)
+
+        first = client.get("/").text
+        second = client.get("/?p_to_check=2&p_marked_correct=2").text
+
+        assert first.count('id="row-c') == 25 and first.count('id="row-m') == 25
+        assert "Page 1 of 2" in _section(first, "to_check")
+        assert _section(second, "to_check").count('id="row-c') == 5  # 30 - 25
+        assert _section(second, "marked_correct").count('id="row-m') == 5
+        # paging one section keeps where the other is
+        assert "p_marked_correct=2" in _section(second, "to_check") or "p_to_check=1" in _section(second, "to_check")
+        newer = re.search(r'href="([^"]*)#section-to_check">&larr; Newer', second).group(1)
+        assert "p_marked_correct=2" in newer and "p_to_check=1" in newer
+
+    @pytest.mark.parametrize("value,expected_page", [("99", 2), ("0", 1), ("-3", 1), ("abc", 1), ("", 1)])
+    def test_a_bad_page_number_is_clamped_not_an_error(self, client, db_session, value, expected_page):
+        for i in range(30):
+            _completed_row(db_session, f"c{i:02d}", subject=f"Check {i:02d}", event_id=f"cal-c{i}")
+
+        response = client.get(f"/?p_to_check={value}")
+
+        assert response.status_code == 200
+        assert f"Page {expected_page} of 2" in _section(response.text, "to_check")
+
+    def test_a_subject_containing_html_is_escaped_inside_a_section(self, client, db_session):
+        _completed_row(db_session, "x1", subject="<script>alert(1)</script>", event_id=None)
+
+        html = _section(client.get("/").text, "needs_review")
+
+        assert "<script>alert(1)</script>" not in html and "&lt;script&gt;" in html
+
+
+class TestDecisionsMoveAnEmailBetweenSections:
+    """A button press changes the decision, so the email must appear in its new section after the reload."""
+
+    def test_approving_moves_it_from_needs_review_to_to_check(self, client, db_session, calendar):
+        _completed_row(db_session, "r1", subject="Workshop signup", event_id=None)
+        assert "Workshop signup" in _section(client.get("/").text, "needs_review")
+
+        response = client.post("/emails/r1/approve")
+
+        page = client.get("/").text
+        assert response.headers["HX-Refresh"] == "true"
+        assert "Workshop signup" in _section(page, "to_check") and "Workshop signup" not in _section(page, "needs_review")
+
+    def test_declining_moves_it_to_skipped(self, client, db_session):
+        _completed_row(db_session, "r1", subject="Workshop signup", event_id=None)
+
+        client.post("/emails/r1/decline")
+
+        page = client.get("/").text
+        assert "Workshop signup" in _section(page, "skipped") and "Workshop signup" not in _section(page, "needs_review")
+
+    def test_voting_correct_moves_it_from_to_check_to_marked_correct(self, client, db_session):
+        _completed_row(db_session, "c1", subject="Rent due")
+
+        client.post("/emails/c1/correct", data={"is_correct": "true"})
+
+        page = client.get("/").text
+        assert "Rent due" in _section(page, "marked_correct") and "Rent due" not in _section(page, "to_check")
+
+    def test_every_action_asks_the_browser_to_reload(self, client, db_session, calendar, monkeypatch):
+        monkeypatch.setattr(main.calendar_client, "update_event", lambda service, **kw: None)
+        _completed_row(db_session, "r1", event_id=None)
+        _completed_row(db_session, "c1", subject="Rent due", event_id="cal-1")
+
+        responses = [
+            client.post("/emails/r1/approve"),
+            client.post("/emails/c1/correct", data={"is_correct": "true"}),
+            client.post("/emails/c1/reschedule", data={"new_datetime": "2026-10-05T14:30"}),
+            client.post("/emails/c1/remove"),
+        ]
+
+        assert all(r.status_code == 200 and r.headers["HX-Refresh"] == "true" for r in responses)
+
+    def test_buttons_no_longer_try_to_swap_a_single_row(self, client, db_session):
+        _completed_row(db_session, "r1", event_id=None)
+        _completed_row(db_session, "c1", subject="Rent due", event_id="cal-1")
+
+        page = client.get("/").text
+
+        assert 'hx-target="#row-' not in page
+        assert 'hx-swap="none"' in page

@@ -74,41 +74,44 @@
   <div id="waiting-spinner" class="htmx-indicator verdict" style="margin-top:6px;">Checking Gmail…</div>
 </div>
 
-<div class="card overflow-x">
-  <table>
-    <thead>
-      <tr>
-        <th>Subject</th>
-        <th>Extracted deadline</th>
-        <th>Status</th>
-        <th>Processed</th>
-        <th>Correction</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for email in emails %}
-        {% include "_row.html" %}
-      {% else %}
-        <tr><td colspan="5" class="verdict">No emails processed yet.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% if total_pages > 1 %}
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px; font-size:0.85rem;">
-      {% if page > 1 %}
-        <a href="/?page={{ page - 1 }}&action_page={{ action_page }}">&larr; Newer</a>
-      {% else %}
-        <span></span>
-      {% endif %}
-      <span class="verdict">Page {{ page }} of {{ total_pages }}</span>
-      {% if page < total_pages %}
-        <a href="/?page={{ page + 1 }}&action_page={{ action_page }}">Older &rarr;</a>
-      {% else %}
-        <span></span>
-      {% endif %}
-    </div>
-  {% endif %}
-</div>
+{% for s in sections %}
+<details class="card section" {% if s.category.open_by_default %}open{% endif %} id="section-{{ s.category.key }}">
+  <summary>
+    <strong>{{ s.category.title }}</strong>
+    <span class="badge {{ 'badge-review' if s.category.key in ('needs_review', 'marked_incorrect') and s.total else ('badge-failed' if s.category.key == 'failed' else 'badge-skipped') }}">{{ s.total }}</span>
+  </summary>
+  <div class="section-body overflow-x">
+    <p class="verdict" style="margin-top:0;">{{ s.category.blurb }}</p>
+    {% if s.rows %}
+    <table>
+      <thead>
+        <tr>
+          <th>Subject</th>
+          <th>Extracted deadline</th>
+          <th>Status</th>
+          <th>Processed</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for email in s.rows %}
+          {% include "_row.html" %}
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="verdict">Nothing here.</p>
+    {% endif %}
+    {% if s.pages > 1 %}
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px; font-size:0.85rem;">
+        {% if s.newer_url %}<a href="{{ s.newer_url }}#section-{{ s.category.key }}">&larr; Newer</a>{% else %}<span></span>{% endif %}
+        <span class="verdict">Page {{ s.page }} of {{ s.pages }}</span>
+        {% if s.older_url %}<a href="{{ s.older_url }}#section-{{ s.category.key }}">Older &rarr;</a>{% else %}<span></span>{% endif %}
+      </div>
+    {% endif %}
+  </div>
+</details>
+{% endfor %}
 
 <div class="card">
   <h2 style="font-size:1.05rem; margin-top:0;">Action items</h2>
@@ -133,17 +136,9 @@
   {% endfor %}
   {% if total_action_pages > 1 %}
     <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px; font-size:0.85rem;">
-      {% if action_page > 1 %}
-        <a href="/?page={{ page }}&action_page={{ action_page - 1 }}">&larr; Newer</a>
-      {% else %}
-        <span></span>
-      {% endif %}
+      {% if action_newer_url %}<a href="{{ action_newer_url }}">&larr; Newer</a>{% else %}<span></span>{% endif %}
       <span class="verdict">Page {{ action_page }} of {{ total_action_pages }}</span>
-      {% if action_page < total_action_pages %}
-        <a href="/?page={{ page }}&action_page={{ action_page + 1 }}">Older &rarr;</a>
-      {% else %}
-        <span></span>
-      {% endif %}
+      {% if action_older_url %}<a href="{{ action_older_url }}">Older &rarr;</a>{% else %}<span></span>{% endif %}
     </div>
   {% endif %}
 </div>

@@ -155,13 +155,14 @@ class TestTheDashboardRoutesStillBehaveTheSame:
         yield TestClient(main.app)
         main.app.dependency_overrides.clear()
 
-    def test_approve_creates_the_event_and_returns_the_updated_row(self, client, db_session, calendar):
+    def test_approve_creates_the_event_and_asks_the_page_to_reload(self, client, db_session, calendar):
         _row(db_session, subject="Workshop signup", event_id=None)
 
         response = client.post("/emails/e1/approve")
 
         assert response.status_code == 200
-        assert "Workshop signup" in response.text
+        assert response.headers["HX-Refresh"] == "true"  # the email moves section, so the page reloads
+        assert db_session.get(ProcessedEmail, "e1").calendar_event_id == "new-event-id"
         assert len(calendar["created"]) == 1
 
     def test_approve_refuses_with_400_and_an_unknown_email_with_404(self, client, db_session, calendar):
