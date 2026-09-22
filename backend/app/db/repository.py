@@ -647,8 +647,12 @@ def _action_items_filter():
     # duplicate_of_email_id is set on a follow-up that got folded into an
     # earlier action item (find_duplicate_action_item/fold_action_item) —
     # excluded here so the fold doesn't still show up as a second entry.
+    # status == COMPLETED excludes one denied with mark_skipped (see review_actions.decline,
+    # reused here as the action-items panel's "Deny" button) — otherwise a denied item never
+    # actually left the list, since nothing else about it changes.
     return (
         ProcessedEmail.extraction_action_type.in_([ActionType.NEEDS_REPLY, ActionType.UNCLEAR])
+        & (ProcessedEmail.status == ProcessingStatus.COMPLETED)
         & ProcessedEmail.duplicate_of_email_id.is_(None)
         & ProcessedEmail.calendar_event_id.is_(None)  # once scheduled it is no longer "no fixed date"
         & not_removed()

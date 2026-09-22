@@ -463,14 +463,21 @@ class TestIncorrectAndRescheduleOnALiveEvent:
         assert len(event_calls["updated"]) == 1
         assert repository.get_correction_rate(db_session) == 0.0
 
-    def test_a_correct_verdict_still_leaves_reschedule_and_remove_available(self, client, db_session, event_calls):
-        _completed_row(db_session)
+    def test_a_correct_verdict_hides_the_row_but_keeps_the_vote_and_the_event(self, client, db_session, event_calls):
+        """The user does not want to keep seeing something once it's confirmed right — but the
+        vote still counts for the correction-rate stat, and the real Calendar event is untouched
+        (only Remove deletes it; marking correct never does)."""
+        row = _completed_row(db_session)
 
-        client.post("/emails/e1/correct", data={"is_correct": "true"})
+        response = client.post("/emails/e1/correct", data={"is_correct": "true"})
 
-        html = _section(client.get("/").text, "marked_correct")
-        assert "Marked correct" in html
-        assert "/emails/e1/reschedule" in html and "/emails/e1/remove" in html
+        assert response.headers["HX-Refresh"] == "true"
+        page = client.get("/").text
+        assert "Nominations due" not in page  # the default _completed_row subject
+        assert 'id="row-e1"' not in page
+        db_session.refresh(row)
+        assert row.user_correction is True and row.calendar_event_id == "cal-1"
+        assert repository.get_correction_rate(db_session) == 1.0
 
     def test_incorrect_then_remove_keeps_the_explicit_vote_in_the_statistics(self, client, db_session, event_calls):
         _completed_row(db_session, "e1")
@@ -566,7 +573,7 @@ class TestCategorySections:
         self._everything(db_session)
         page = client.get("/").text
         expected = {
-            "needs_review": "Held back item", "to_check": "Auto added item", "marked_correct": "Right item",
+            "needs_review": "Held back item", "to_check": "Auto added item",
             "marked_incorrect": "Wrong item", "skipped": "Declined item", "failed": "Failed item",
         }
 
@@ -575,6 +582,9 @@ class TestCategorySections:
             for other in expected:
                 if other != key:
                     assert subject not in _section(page, other), f"{subject!r} leaked into {other}"
+        # marked_correct is tracked (it still counts toward the correction rate) but never rendered
+        assert 'id="section-marked_correct"' not in page
+        assert "Right item" not in page
 
     def test_action_items_stay_in_their_own_panel_not_in_a_section(self, client, db_session):
         self._everything(db_session)
@@ -589,7 +599,7 @@ class TestCategorySections:
 
         page = client.get("/").text
 
-        order = [page.index(f'id="section-{k}"') for k in ("needs_review", "to_check", "marked_incorrect", "failed", "marked_correct", "skipped")]
+        order = [page.index(f'id="section-{k}"') for k in ("needs_review", "to_check", "marked_incorrect", "failed", "skipped")]
         assert order == sorted(order)
         assert re.search(r"On your calendar: to check</strong>\s*<span[^>]*>2</span>", page)  # a true count, not a guess
 
@@ -606,8 +616,7 @@ class TestCategorySections:
 
         for key in ("needs_review", "to_check", "marked_incorrect", "failed"):
             assert re.search(rf'<details[^>]*id="section-{key}"', _section(page, key)) and " open" in _section(page, key).split(">")[0]
-        for key in ("marked_correct", "skipped"):
-            assert " open" not in _section(page, key).split(">")[0]
+        assert " open" not in _section(page, "skipped").split(">")[0]
 
     def test_a_removed_email_appears_in_no_section(self, client, db_session, event_calls):
         _completed_row(db_session, "gone", subject="Removed item")
@@ -619,20 +628,20 @@ class TestCategorySections:
         for i in range(30):
             _completed_row(db_session, f"c{i:02d}", subject=f"Check {i:02d}", event_id=f"cal-c{i}")
         for i in range(30):
-            _completed_row(db_session, f"m{i:02d}", subject=f"Mark {i:02d}", event_id=f"cal-m{i}")
-            repository.set_correction(db_session, f"m{i:02d}", True)
+            _completed_row(db_session, f"m{i:02d}", subject=f"Wrong {i:02d}", event_id=f"cal-m{i}")
+            repository.set_correction(db_session, f"m{i:02d}", False)
 
         first = client.get("/").text
-        second = client.get("/?p_to_check=2&p_marked_correct=2").text
+        second = client.get("/?p_to_check=2&p_marked_incorrect=2").text
 
         assert first.count('id="row-c') == 25 and first.count('id="row-m') == 25
         assert "Page 1 of 2" in _section(first, "to_check")
         assert _section(second, "to_check").count('id="row-c') == 5  # 30 - 25
-        assert _section(second, "marked_correct").count('id="row-m') == 5
+        assert _section(second, "marked_incorrect").count('id="row-m') == 5
         # paging one section keeps where the other is
-        assert "p_marked_correct=2" in _section(second, "to_check") or "p_to_check=1" in _section(second, "to_check")
+        assert "p_marked_incorrect=2" in _section(second, "to_check") or "p_to_check=1" in _section(second, "to_check")
         newer = re.search(r'href="([^"]*)#section-to_check">&larr; Newer', second).group(1)
-        assert "p_marked_correct=2" in newer and "p_to_check=1" in newer
+        assert "p_marked_incorrect=2" in newer and "p_to_check=1" in newer
 
     @pytest.mark.parametrize("value,expected_page", [("99", 2), ("0", 1), ("-3", 1), ("abc", 1), ("", 1)])
     def test_a_bad_page_number_is_clamped_not_an_error(self, client, db_session, value, expected_page):
@@ -673,13 +682,14 @@ class TestDecisionsMoveAnEmailBetweenSections:
         page = client.get("/").text
         assert "Workshop signup" in _section(page, "skipped") and "Workshop signup" not in _section(page, "needs_review")
 
-    def test_voting_correct_moves_it_from_to_check_to_marked_correct(self, client, db_session):
+    def test_voting_correct_removes_it_from_view_but_keeps_it_correct_in_the_stats(self, client, db_session):
         _completed_row(db_session, "c1", subject="Rent due")
 
         client.post("/emails/c1/correct", data={"is_correct": "true"})
 
         page = client.get("/").text
-        assert "Rent due" in _section(page, "marked_correct") and "Rent due" not in _section(page, "to_check")
+        assert "Rent due" not in page and "Rent due" not in _section(page, "to_check")
+        assert repository.get_correction_rate(db_session) == 1.0
 
     def test_every_action_asks_the_browser_to_reload(self, client, db_session, calendar, monkeypatch):
         monkeypatch.setattr(main.calendar_client, "update_event", lambda service, **kw: None)
@@ -774,3 +784,170 @@ class TestNeedsReviewOffersApproveRescheduleAndDeny:
         page = client.get("/").text
         assert "Denied or skipped" in page
         assert "Workshop signup" in _section(page, "skipped") and "Workshop signup" not in _section(page, "needs_review")
+
+
+class TestActionItemDeny:
+    """Alongside Schedule, an action item can be denied — the item leaves the list, and nothing
+    is ever created on the calendar for it (it isn't 'wrong', there's just nothing to do)."""
+
+    def test_denying_removes_it_from_the_action_items_list_and_creates_no_event(self, client, db_session, create_calls):
+        _action_item(db_session)
+
+        response = client.post("/emails/a1/decline")
+
+        assert response.status_code == 200 and response.headers["HX-Refresh"] == "true"
+        assert repository.list_action_items(db_session) == []
+        assert repository.count_action_items(db_session) == 0
+        assert create_calls["created"] == []
+
+    def test_a_denied_action_item_does_not_reappear_anywhere_on_the_page(self, client, db_session, create_calls):
+        _action_item(db_session, subject="Reply to advisor about thesis")
+        client.post("/emails/a1/decline")
+
+        assert "Reply to advisor about thesis" not in client.get("/").text
+
+    def test_deny_is_offered_next_to_schedule(self, client, db_session):
+        _action_item(db_session)
+
+        html = client.get("/").text
+
+        assert "/emails/a1/schedule" in html
+        assert "/emails/a1/decline" in html and "Deny" in html
+
+    def test_denying_an_unknown_action_item_is_a_404(self, client):
+        assert client.post("/emails/nope/decline").status_code == 404
+
+    def test_the_underlying_row_is_kept_not_deleted(self, client, db_session):
+        _action_item(db_session)
+
+        client.post("/emails/a1/decline")
+
+        row = db_session.get(ProcessedEmail, "a1")
+        assert row is not None and row.status == ProcessingStatus.SKIPPED
+
+
+class TestActionItemsAgeSplit:
+    """Action items older than the recent window fold into one collapsed section instead of
+    pushing the recent ones down the page."""
+
+    @pytest.fixture(autouse=True)
+    def _pin_timezone(self, monkeypatch):
+        from app import date_utils
+
+        monkeypatch.setattr(date_utils, "CALENDAR_TIMEZONE", "America/Los_Angeles")
+
+    def _age(self, db_session, email_id, days):
+        row = db_session.get(ProcessedEmail, email_id)
+        row.updated_at = datetime.now(timezone.utc) - timedelta(days=days)
+        db_session.commit()
+
+    def test_a_recent_item_shows_by_day_with_no_older_section_at_all(self, client, db_session):
+        _action_item(db_session, "a1", subject="Recent one")
+
+        html = client.get("/").text
+
+        assert "Recent one" in html
+        assert "Older than" not in html
+
+    def test_an_old_item_is_folded_into_the_older_section_with_its_count(self, client, db_session):
+        _action_item(db_session, "a1", subject="Old one")
+        self._age(db_session, "a1", days=10)
+
+        html = client.get("/").text
+
+        assert "Older than 4 days" in html
+        assert re.search(r"Older than 4 days</strong>\s*<span[^>]*>1</span>", html)
+        assert "Old one" in html  # still on the page, inside the collapsed section
+
+    def test_the_older_count_is_a_true_total_not_a_page_size(self, client, db_session):
+        for i in range(6):
+            _action_item(db_session, f"a{i}", subject=f"Old {i}")
+            self._age(db_session, f"a{i}", days=10)
+
+        html = client.get("/").text
+
+        assert re.search(r"Older than 4 days</strong>\s*<span[^>]*>6</span>", html)
+
+    def test_an_item_exactly_at_the_cutoff_still_counts_as_recent(self, client, db_session):
+        _action_item(db_session, "a1", subject="Right at the edge")
+        self._age(db_session, "a1", days=4)
+
+        html = client.get("/").text
+
+        assert "Older than 4 days" not in html
+        assert "Right at the edge" in html
+
+    def test_recent_and_older_items_coexist_without_double_counting(self, client, db_session):
+        _action_item(db_session, "a1", subject="Recent")
+        _action_item(db_session, "a2", subject="Old")
+        self._age(db_session, "a2", days=10)
+
+        html = client.get("/").text
+
+        assert "Recent" in html and "Old" in html
+        assert re.search(r"Older than 4 days</strong>\s*<span[^>]*>1</span>", html)
+
+
+class TestWhatAndWhenColumns:
+    """The row splits into a Subject, a What (the extracted name) and a When (date, and time only
+    if one was actually found — a date-only deadline must not show a fabricated time)."""
+
+    def test_what_shows_the_extracted_name_separately_from_the_raw_subject(self, client, db_session):
+        repository.try_claim_email(db_session, "e1", "t1", "RE: fwd: URGENT!! please read")
+        repository.mark_completed(
+            db_session, "e1",
+            ExtractionResult(email_id="e1", event_name="Rent due", deadline_date_raw="Sep 24",
+                             deadline_date=datetime(2026, 9, 24, 12, 0, tzinfo=timezone.utc),
+                             source_context="c", confidence="high", action_type="deadline"),
+            calendar_event_id="cal-1",
+        )
+
+        html = _section(client.get("/").text, "to_check")
+
+        assert "RE: fwd: URGENT!! please read" in html and "Rent due" in html
+
+    def test_a_date_only_deadline_does_not_fabricate_a_time(self, client, db_session):
+        """The bug: a date-only string parses with the CURRENT wall-clock time as filler (see
+        date_utils.parse_deadline_date), so the dashboard was showing e.g. '11:41 PM' for
+        something that never had a time at all."""
+        repository.try_claim_email(db_session, "e1", "t1", "Some deadline")
+        repository.mark_completed(
+            db_session, "e1",
+            ExtractionResult(email_id="e1", event_name="Some deadline", deadline_date_raw="Sep 23, 2026",
+                             deadline_date=datetime(2026, 9, 23, 23, 41, tzinfo=timezone.utc),
+                             source_context="c", confidence="high", action_type="deadline"),
+            calendar_event_id="cal-1",
+        )
+        assert db_session.get(ProcessedEmail, "e1").extraction_has_time is False  # sanity on the fixture
+
+        html = _section(client.get("/").text, "to_check")
+
+        assert "Sep 23, 2026" in html
+        # Scoped to right after the date, not the whole row: the Processed column legitimately
+        # always has a real time, and would otherwise make this assertion pass for the wrong reason.
+        after_date = html.split("Sep 23, 2026", 1)[1][:15]
+        assert "PM" not in after_date and "AM" not in after_date
+
+    def test_a_timed_deadline_still_shows_its_time(self, client, db_session):
+        repository.try_claim_email(db_session, "e1", "t1", "Timed thing")
+        repository.mark_completed(
+            db_session, "e1",
+            ExtractionResult(email_id="e1", event_name="Timed thing", deadline_date_raw="Sep 23, 2026 at 5:00 PM",
+                             deadline_date=datetime(2026, 9, 24, 0, 0, tzinfo=timezone.utc),
+                             source_context="c", confidence="high", action_type="deadline"),
+            calendar_event_id="cal-1",
+        )
+        assert db_session.get(ProcessedEmail, "e1").extraction_has_time is True
+
+        html = _section(client.get("/").text, "to_check")
+
+        assert "PM" in html or "AM" in html
+
+    def test_no_date_at_all_says_so_plainly(self, client, db_session):
+        row = _completed_row(db_session, "a1", subject="Reply to advisor", event_id=None, action_type="needs_reply")
+        row.calendar_event_id = "cal-1"  # force it into the deadline table for this check, bypassing Schedule
+        db_session.commit()
+
+        html = client.get("/").text
+
+        assert "no date" in html

@@ -74,13 +74,24 @@ embeddings and asking the LLM directly):
   dashboard**, so the calendar keeps one event per real deadline.
 - **Compare exact date and time only when both sides have a time;** otherwise compare dates.
 
-### 6. Skip real calendar invites
+### 6. Skip anything Google Calendar already handled
 Rather than assume, the actual `.ics` part of every invite-shaped email in a real inbox was read.
 Every one, whether from a person or a tool such as Zoom, was a well-formed `METHOD:REQUEST` with
 the account as an `ATTENDEE`, which is what Gmail and Calendar already use to show an RSVP banner
 or auto-add the event. Extracting the same email again would create a redundant second entry. So
 any email carrying an invite part is skipped. A narrower rule ("only invites from a person") was
 rejected because the data showed no real difference to draw.
+**Amendment: an `.ics` attachment alone missed real cases.** Two real bugs surfaced from it: a
+"New event" notification (an event added to a shared calendar, no `.ics` attached) was extracted
+and given a second, duplicate Calendar event; a "Canceled event" notification (nothing real to
+act on) was extracted as an "unclear" action item. The first fix checked for Google's
+`X-Google-Calendar-Notification` header; checked against five real, distinct patterns
+("New event:", "Canceled event:", a real "Invitation:", "Updated invitation:", "Accepted:"), that
+header was present on only two. All five instead carry the same `Sender: Google Calendar
+<calendar-notification@google.com>` — the actual RFC 5322 sending agent, kept distinct from
+`From` (the human organizer) so a reply goes to the right place — so the check now matches on
+that Sender address instead, alongside the original `.ics` check for third-party tools that never
+go through Google Calendar's own relay at all.
 
 ### 7. True recurring events
 When an email describes a repeating obligation ("rent is due on the 1st of every month"), the

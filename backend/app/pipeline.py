@@ -257,17 +257,16 @@ def _claim_and_process(session, email, *, over_budget: bool = False, dry_run: bo
     back as "would_process" (or "skipped" if the claim would have been refused
     — see repository.would_claim_email), and nothing is written.
     """
-    if email.has_calendar_invite:
-        # A real .ics calendar invite — Gmail/Calendar already surfaces
-        # this natively (RSVP banner, possibly auto-added to the calendar)
-        # independent of this pipeline. Extracting a deadline/action item
-        # from it too would create a redundant second entry for something
-        # already handled — see gmail_client._has_calendar_invite and
-        # docs/design-decisions.md, decision 6. Never even claimed,
-        # same cheapest-possible-skip pattern as the pre-filter below.
-        # Kept out of "filtered_out" below on purpose: a batch of invites
-        # arriving is an unrelated category, not a pre-filter regression
-        # signal, and would otherwise confound the anomaly flag.
+    if email.already_on_calendar:
+        # A real .ics calendar invite, or a notification Google Calendar itself sent about an
+        # event it already created, updated or canceled (its own X-Google-Calendar-Notification
+        # header) — Gmail/Calendar already surfaces or has handled this natively, independent of
+        # this pipeline. Extracting a deadline/action item from it too would create a redundant
+        # second entry (or, for a plain cancellation notice, an extraction with nothing real to
+        # act on) — see gmail_client._to_email_message and docs/design-decisions.md, decision 6.
+        # Never even claimed, same cheapest-possible-skip pattern as the pre-filter below.
+        # Kept out of "filtered_out" below on purpose: a batch of these arriving is an unrelated
+        # category, not a pre-filter regression signal, and would otherwise confound the anomaly flag.
         return "skipped"
 
     if not is_actionable_candidate(email.subject, email.body_text):

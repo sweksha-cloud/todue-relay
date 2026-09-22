@@ -5,6 +5,11 @@ panel, and removed items are hidden) is in exactly one of these. They are define
 dashboard, and anything else that shows the same lists, cannot disagree about what a category means. The
 matching queries are in repository.py (list_category / count_category), and a test checks that the
 categories partition the list: nothing in two, nothing in none.
+
+`visible_in_dashboard=False` (marked_correct only) means the category still exists as a query and still
+holds the row — the vote still counts toward the correction-rate stat, and the real Calendar event is
+untouched — it just isn't rendered as a section on the dashboard: once something is marked correct, the
+user does not want to keep seeing it. main.py's dashboard route skips these when building `sections`.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ class Category:
     blurb: str
     open_by_default: bool  # starts expanded (the ones that want a decision, or are worth a look)
     show_when_empty: bool  # the two main working sections always show; the rest appear when they have something
+    visible_in_dashboard: bool = True  # False: tracked, but never rendered as a dashboard section
 
 
 CATEGORIES: tuple[Category, ...] = (
@@ -56,6 +62,7 @@ CATEGORIES: tuple[Category, ...] = (
         "Checked, and right.",
         open_by_default=False,
         show_when_empty=False,
+        visible_in_dashboard=False,  # the user does not want to keep seeing something once it's confirmed right
     ),
     Category(
         "skipped",

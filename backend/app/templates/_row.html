@@ -1,14 +1,22 @@
 <tr id="row-{{ email.email_id }}">
   <td>{{ email.email_subject }}</td>
+  <td>{{ email.extraction_event_name if email.extraction_event_name else "—" }}</td>
   <td>
-    {% if email.extraction_event_name %}
-      {{ email.extraction_event_name }}<br>
-      <span class="verdict">{{ (email.extraction_deadline_parsed | to_local).strftime("%b %d, %Y %I:%M %p") if email.extraction_deadline_parsed else "no date" }}</span>
+    {% if email.extraction_deadline_parsed %}
+      {% if email.extraction_has_time %}
+        {{ (email.extraction_deadline_parsed | to_local).strftime("%b %d, %Y %I:%M %p") }}
+      {% else %}
+        {# No real time was extracted — showing one anyway would fabricate precision that was
+           never there (a date-only string gets whatever wall-clock time the pipeline happened to
+           run at as its filler hour/minute; see app/date_utils.py parse_deadline_date). The real
+           Calendar event is unaffected: calendar_client.py already makes it all-day when
+           has_time is false. #}
+        {{ (email.extraction_deadline_parsed | to_local).strftime("%b %d, %Y") }}
+      {% endif %}
     {% else %}
-      <span class="verdict">—</span>
+      <span class="verdict">no date</span>
     {% endif %}
-  </td>
-  <td>
+    <br>
     <span class="badge {{ status_badge_class(display_status(email)) }}">{{ display_status(email) }}</span>
     {% if email.is_implausible_date %}
       <span class="badge badge-failed" title="Date is outside the plausible range — likely a parsing error, not a real deadline this far out">⚠ implausible date</span>

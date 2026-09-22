@@ -20,7 +20,7 @@ class EmailMessage:
     date: str
     snippet: str
     body_text: str
-    has_calendar_invite: bool = False
+    already_on_calendar: bool = False
 
 
 def get_gmail_service():
@@ -47,6 +47,22 @@ def _decode_body(payload: dict) -> str:
 
 
 _CALENDAR_INVITE_MIME_TYPES = {"text/calendar", "application/ics"}
+
+# The RFC 5322 Sender address Google Calendar's own notification system uses for EVERY automated
+# email it sends about an event — distinct from From, which shows the human organizer, so a
+# person reading it knows who to reply to. Checked directly against five real, distinct subject
+# patterns from this inbox (2026-09-21): "New event: ...", "Canceled event: ...", a real
+# "Invitation: ..." (which also has an .ics part), "Updated invitation: ...", and "Accepted:
+# ..." (an RSVP confirmation copy) — every one carried this exact Sender, even the three with no
+# .ics attachment and no distinguishing subject wording. An earlier version of this check looked
+# for the X-Google-Calendar-Notification header instead; it was present on only two of the five
+# and missed "Updated invitation:" and "Accepted:" entirely, so it was replaced with this.
+#
+# Missing this let real bugs through: extraction ran on a "New event" notification and created a
+# second, duplicate Calendar event for something Google had already added; a "Canceled event"
+# notification (nothing real to act on) was extracted as an "unclear" action item instead of
+# being skipped.
+_CALENDAR_NOTIFICATION_SENDER = "calendar-notification@google.com"
 
 
 def _has_calendar_invite(payload: dict) -> bool:
@@ -77,9 +93,17 @@ def _header(headers: list[dict], name: str) -> str:
     return ""
 
 
+def _is_from_google_calendar(headers: list[dict]) -> bool:
+    """See _CALENDAR_NOTIFICATION_SENDER above: true for any automated email Google Calendar
+    itself sent about an event, whatever the subject wording and whether or not it has an .ics
+    attachment."""
+    return _CALENDAR_NOTIFICATION_SENDER in _header(headers, "Sender").lower()
+
+
 def _to_email_message(msg: dict) -> EmailMessage:
     headers = msg.get("payload", {}).get("headers", [])
     body_text = _decode_body(msg.get("payload", {})) or msg.get("snippet", "")
+    already_on_calendar = _has_calendar_invite(msg.get("payload", {})) or _is_from_google_calendar(headers)
 
     return EmailMessage(
         id=msg["id"],
@@ -89,7 +113,7 @@ def _to_email_message(msg: dict) -> EmailMessage:
         date=_header(headers, "Date"),
         snippet=msg.get("snippet", ""),
         body_text=body_text,
-        has_calendar_invite=_has_calendar_invite(msg.get("payload", {})),
+        already_on_calendar=already_on_calendar,
     )
 
 

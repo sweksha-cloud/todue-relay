@@ -28,7 +28,7 @@ class TestClaimAndProcessSkipsCalendarInvites:
         natively, independent of this pipeline. Must never reach
         try_claim_email (session=None here; a DB call would raise).
         """
-        email = _email(has_calendar_invite=True)
+        email = _email(already_on_calendar=True)
 
         result = _claim_and_process(session=None, email=email)
 
@@ -41,7 +41,7 @@ class TestClaimAndProcessSkipsCalendarInvites:
         invite-skip test above is actually exercising the early-return
         path, not just always returning 'skipped' for unrelated reasons.
         """
-        email = _email(has_calendar_invite=False)
+        email = _email(already_on_calendar=False)
 
         try:
             _claim_and_process(session=None, email=email)
@@ -362,7 +362,7 @@ class TestDailyBudgetGuard:
         _spend(db_session, 8)  # 0 left
         harness.emails = [
             _email(id="e1", subject="hi", body_text="just saying hello, nothing time-sensitive here"),
-            _email(id="e2", has_calendar_invite=True),
+            _email(id="e2", already_on_calendar=True),
             _email(id="e3"),
         ]
 
@@ -460,7 +460,7 @@ class TestDryRun:
         )
         harness.emails = [
             _email(id="e1", subject="hi", body_text="just saying hello, nothing time-sensitive here"),  # pre-filter
-            _email(id="e2", has_calendar_invite=True),  # invite
+            _email(id="e2", already_on_calendar=True),  # invite
             _email(id="e3"),  # would be processed
             _email(id="e4"),  # already done
         ]

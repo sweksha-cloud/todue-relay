@@ -81,6 +81,8 @@ def dashboard(
     # (?p_<key>=N); the two working sections always show, the others only when they have something.
     sections = []
     for category in categories.CATEGORIES:
+        if not category.visible_in_dashboard:
+            continue  # e.g. marked_correct: tracked for the stats, never shown once confirmed right
         total = repository.count_category(db, category.key)
         if total == 0 and not category.show_when_empty:
             continue
@@ -113,6 +115,10 @@ def dashboard(
     caught_this_week = repository.count_deadlines_caught_since(db, since)
 
     action_items_by_day = _group_by_day(action_items)
+    today_local = to_local(datetime.now(timezone.utc)).date()
+    action_items_recent, action_items_older, action_items_older_count = _split_by_age(
+        action_items_by_day, today_local
+    )
     llm_usage = metrics.daily_llm_usage(db)
 
     return templates.TemplateResponse(
@@ -120,7 +126,10 @@ def dashboard(
         "index.html",
         {
             "sections": sections,
-            "action_items_by_day": action_items_by_day,
+            "action_items_recent": action_items_recent,
+            "action_items_older": action_items_older,
+            "action_items_older_count": action_items_older_count,
+            "action_items_recent_days": ACTION_ITEMS_RECENT_DAYS,
             "latest_run": latest_run,
             "parked_count": parked_count,
             "parked": parked,
@@ -195,6 +204,20 @@ def _group_by_day(rows: list) -> list[tuple]:
             order.append(day)
         groups[day].append(row)
     return [(day, groups[day]) for day in order]
+
+
+ACTION_ITEMS_RECENT_DAYS = 4
+
+
+def _split_by_age(by_day: list[tuple], today) -> tuple[list[tuple], list[tuple], int]:
+    """Splits _group_by_day's output at the day cutoff: (recent day-groups, older day-groups,
+    total items in the older ones). "Recent" keeps today's own day-by-day headers front and
+    center; a long tail of old, still-unresolved action items folds into one collapsed group
+    instead of pushing the recent ones down the page."""
+    cutoff = today - timedelta(days=ACTION_ITEMS_RECENT_DAYS)
+    recent = [(day, rows) for day, rows in by_day if day >= cutoff]
+    older = [(day, rows) for day, rows in by_day if day < cutoff]
+    return recent, older, sum(len(rows) for _, rows in older)
 
 
 @app.post("/emails/{email_id}/correct", response_class=HTMLResponse)
