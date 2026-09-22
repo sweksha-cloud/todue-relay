@@ -603,6 +603,14 @@ class TestCategorySections:
         assert order == sorted(order)
         assert re.search(r"On your calendar: to check</strong>\s*<span[^>]*>2</span>", page)  # a true count, not a guess
 
+    def test_denied_or_skipped_renders_below_even_in_progress(self, client, db_session):
+        self._everything(db_session)
+        repository.try_claim_email(db_session, "busy", "t", "Being worked on")  # PROCESSING, stays claimed
+
+        page = client.get("/").text
+
+        assert page.index('id="section-in_progress"') < page.index('id="section-skipped"')
+
     def test_the_two_working_sections_always_show_and_say_so_when_empty(self, client):
         page = client.get("/").text
 

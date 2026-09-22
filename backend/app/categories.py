@@ -65,18 +65,18 @@ CATEGORIES: tuple[Category, ...] = (
         visible_in_dashboard=False,  # the user does not want to keep seeing something once it's confirmed right
     ),
     Category(
+        "in_progress",
+        "In progress",
+        "Being processed right now.",
+        open_by_default=True,
+        show_when_empty=False,
+    ),
+    Category(
         "skipped",
         "Denied or skipped",
         "Not added to your calendar: you denied it, or it was skipped (for example a real calendar invite, "
         "which Gmail already handles).",
         open_by_default=False,
-        show_when_empty=False,
-    ),
-    Category(
-        "in_progress",
-        "In progress",
-        "Being processed right now.",
-        open_by_default=True,
         show_when_empty=False,
     ),
 )
