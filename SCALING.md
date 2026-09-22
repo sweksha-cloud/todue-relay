@@ -27,6 +27,25 @@ but nothing in it assumes there is only one.
 
 Everything below is shaped by those two facts.
 
+### Note: a public *demo* is a different problem than scaling
+
+The instinct to deploy something recruiters can click on runs into constraint 1 immediately, but not
+in the way it first looks: a "bring your own Google account" demo mostly doesn't work — while the
+OAuth app is in Testing status, Google only lets **pre-approved test users** sign in at all, so a
+random visitor cannot complete Gmail/Calendar consent against it. Getting past that needs the
+verification and paid annual assessment from constraint 1, real overhead not worth taking on for a
+portfolio piece.
+
+That still leaves "deploy my own dashboard publicly, under my own already-connected account, so people
+can click around" — no visitor sign-in involved, so constraint 1 does not actually block it. What does
+block it is simpler and more serious: **the dashboard has no authentication at all** (see
+[README.md](README.md)'s Known limitations). Publishing it as-is, with the real stored token behind
+it, would let any visitor with the URL not just read real inbox/calendar data but press Remove,
+Reschedule or Trash on it — real deletes and real Calendar writes, with no login required. What I'd
+do: point the public instance at seeded, fake data (the same "preview" database built for testing the
+Gmail add-on) rather than the real one, so there is nothing real to expose or corrupt even with zero
+auth in front of it.
+
 ---
 
 ## 1. How each user connects Google
