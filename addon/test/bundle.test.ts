@@ -66,6 +66,18 @@ describe("the bundled script, as Gmail runs it", () => {
     expect(has("debugToken")).toBe(true);
   });
 
+  it("also declares each entry point at the top level of the file, not just inside the bundle's IIFE", () => {
+    // The vm sandbox above proves these work at runtime, but Apps Script's editor picks the
+    // functions listed in its "function to run" dropdown by statically scanning the file for
+    // top-level `function` declarations — it never runs the code. A declaration nested inside
+    // the bundle's `(() => { ... })()` is invisible to that scan even though it works fine when
+    // Gmail calls it by name via the manifest. This is a textual check, on purpose: it fails if
+    // the IIFE-only entry points regress, which the vm-based tests above cannot detect.
+    for (const name of ["onHomepage", "onRefresh", "onAction", "debugToken"]) {
+      expect(code).toMatch(new RegExp(`^function ${name}\\(`, "m"));
+    }
+  });
+
   it("onHomepage fetches the summary with the identity token and shows what came back", () => {
     const body = summary({
       counts: { needs_review: 1, upcoming: 0, action_items: 0 },
