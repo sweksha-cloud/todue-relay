@@ -37,7 +37,7 @@ CATEGORIES: tuple[Category, ...] = (
     ),
     Category(
         "to_check",
-        "On your calendar: to check",
+        "On your calendar",
         "Added automatically. Mark it correct or incorrect, reschedule it, or remove it.",
         open_by_default=True,
         show_when_empty=True,
