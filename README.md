@@ -46,7 +46,7 @@ flowchart LR
    audit trail. It is safe to re-run: nothing is processed or created twice.
 6. **Review** on a small dashboard (`app/main.py`), where emails are grouped by the
    decision made about them (needs your review, on your calendar to check, marked
-   correct or incorrect, skipped or declined, failed): approve or decline queued
+   correct or incorrect, denied or skipped, failed): approve, reschedule or deny held-back
    items, schedule an action item onto the calendar, correct, reschedule or remove
    an auto-created event (a removed item leaves the list), and see run
    history, filter pass rate and Gemini usage on `/metrics`. A **Check waiting
@@ -208,7 +208,7 @@ TEST_DATABASE_URL=postgresql+psycopg://postgres:test@localhost:55432/testdb \
   python -m pytest tests/ -v
 ```
 
-383 tests across 21 files (plus 92 for the Gmail add-on), covering date and timezone parsing, pre-filter
+400 tests across 21 files (plus 92 for the Gmail add-on), covering date and timezone parsing, pre-filter
 scoring, LLM response validation (including 429 and 5xx handling), Calendar event
 construction (including recurrence), duplicate-deadline matching, the idempotency
 claim logic and retry cap, the daily call budget and dry-run mode (driving the
@@ -318,7 +318,7 @@ backend/
   requirements.txt              # full app (pipeline + dashboard)
   requirements-lambda.txt       # pipeline-only, for the Lambda package
   requirements-dev.txt
-  tests/                        # 383 tests, run against real Postgres
+  tests/                        # 400 tests, run against real Postgres
 addon/                          # Gmail add-on (Apps Script, TypeScript): a read-only home card
 docs/
   design-decisions.md           # 23 decisions: what else was considered, and the evidence

@@ -9,11 +9,13 @@ knows nothing about web frameworks.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy.orm import Session
 
 from app import calendar_client
 from app.db import repository
-from app.db.models import ProcessedEmail, ProcessingStatus
+from app.db.models import ActionType, ProcessedEmail, ProcessingStatus
 
 
 class ActionError(Exception):
@@ -66,6 +68,33 @@ def approve(db: Session, email_id: str) -> ProcessedEmail:
         recurrence_rule=row.extraction_recurrence_rule if row.extraction_is_recurring else None,
     )
     return repository.set_calendar_event(db, email_id, event_id)
+
+
+def approve_at(db: Session, email_id: str, deadline: datetime) -> ProcessedEmail:
+    """Add a held-back deadline to the calendar at a time the person chose ("Reschedule" on a needs-review item).
+
+    approve() adds it at the date the pipeline extracted, and refuses when there is none. This is how to add
+    one whose extracted date is wrong, or that has no date at all. It creates a one-off event at the chosen
+    time (a recurrence rule extracted for a different date would not be trustworthy). Once the person has
+    picked the time, any "implausible date" warning about the extracted one no longer applies.
+    """
+    row = _get(db, email_id)
+    is_deadline = row.extraction_action_type in (None, ActionType.DEADLINE)
+    if row.status != ProcessingStatus.COMPLETED or row.calendar_event_id or not is_deadline:
+        raise ActionError(400, "Not a held-back item")
+
+    service = calendar_client.get_calendar_service()
+    event_id = calendar_client.create_event(
+        service,
+        summary=row.extraction_event_name or row.email_subject,
+        description=row.extraction_source_context or "",
+        deadline=deadline,
+        has_time=True,
+    )
+    row = repository.schedule_action_item(db, email_id, deadline, event_id)  # records the time and the event
+    row.is_implausible_date = False
+    db.commit()
+    return row
 
 
 def decline(db: Session, email_id: str) -> ProcessedEmail:

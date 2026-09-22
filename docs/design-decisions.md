@@ -325,8 +325,11 @@ failed-email count would fire on every transient blip, the noise decision 25 rem
 **The problem.** One long table mixed everything: emails waiting on a decision, ones already checked and
 right, ones that failed. Nothing separated "needs me" from "done", so the useful rows were buried.
 **The groups.** Needs your review; on your calendar to check; marked incorrect; failed; marked correct;
-skipped or declined (and a rare in progress). The ones wanting a decision start open, the finished ones
+denied or skipped (and a rare in progress). The ones wanting a decision start open, the finished ones
 collapsed, each with a count. Action items keep their own panel and removed items stay hidden.
+**What an item needing review offers.** Approve (add it at the date that was found), Reschedule (add it at a
+time you choose, which is also the way to add one whose date is wrong or missing, since Approve needs a date), and
+Deny. Approve is only offered when there is a date to approve.
 **A partition, checked.** Every email the dashboard lists is in exactly one group. That is enforced by one
 definition (`app/categories.py`) with its queries beside the others, and a test that builds every state and
 checks nothing is lost or listed twice, so the groups cannot quietly disagree with the list they divide.

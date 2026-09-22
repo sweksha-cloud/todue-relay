@@ -314,6 +314,22 @@ def approve_email(request: Request, email_id: str, db: Session = Depends(get_db)
     return _refresh()
 
 
+@app.post("/emails/{email_id}/approve-at", response_class=HTMLResponse)
+def approve_email_at(email_id: str, new_datetime: str = Form(...), db: Session = Depends(get_db)):
+    """"Reschedule" on an item needing review: add it to the calendar at a time the person picks, for when
+    the time the pipeline extracted is wrong or missing."""
+    try:
+        naive = datetime.fromisoformat(new_datetime)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date/time")
+    deadline = naive.replace(tzinfo=ZoneInfo(detect_local_timezone()))
+    try:
+        review_actions.approve_at(db, email_id, deadline)
+    except review_actions.ActionError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    return _refresh()
+
+
 @app.post("/emails/{email_id}/decline", response_class=HTMLResponse)
 def decline_email(request: Request, email_id: str, db: Session = Depends(get_db)):
     """The 'don't add' side of the same checkmark — permanently skip

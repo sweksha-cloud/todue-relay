@@ -25,7 +25,7 @@ CATEGORIES: tuple[Category, ...] = (
     Category(
         "needs_review",
         "Needs your review",
-        "Held back: not sure enough to add to your calendar. Approve to add it, or don't add it.",
+        "Held back: not sure enough to add to your calendar. Approve to add it, reschedule to add it at a time you choose, or deny it.",
         open_by_default=True,
         show_when_empty=True,
     ),
@@ -59,8 +59,8 @@ CATEGORIES: tuple[Category, ...] = (
     ),
     Category(
         "skipped",
-        "Skipped or declined",
-        "Not added to your calendar: you declined it, or it was skipped (for example a real calendar invite, "
+        "Denied or skipped",
+        "Not added to your calendar: you denied it, or it was skipped (for example a real calendar invite, "
         "which Gmail already handles).",
         open_by_default=False,
         show_when_empty=False,

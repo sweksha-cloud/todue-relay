@@ -703,3 +703,74 @@ class TestDecisionsMoveAnEmailBetweenSections:
 
         assert 'hx-target="#row-' not in page
         assert 'hx-swap="none"' in page
+
+
+class TestNeedsReviewOffersApproveRescheduleAndDeny:
+    def _held_back_without_a_date(self, db, email_id="nodate", subject="Vague deadline"):
+        repository.try_claim_email(db, email_id, f"t-{email_id}", subject)
+        repository.mark_completed(
+            db, email_id,
+            ExtractionResult(email_id=email_id, event_name=subject, deadline_date_raw=None, deadline_date=None,
+                             source_context="ctx", confidence="low", action_type="deadline"),
+            calendar_event_id=None,
+        )
+
+    def test_a_held_back_item_offers_approve_reschedule_and_deny(self, client, db_session):
+        _completed_row(db_session, "r1", subject="Workshop signup", event_id=None)
+
+        html = _section(client.get("/").text, "needs_review")
+
+        assert "/emails/r1/approve" in html and "Approve" in html
+        assert "/emails/r1/approve-at" in html and "Reschedule" in html and 'type="datetime-local"' in html
+        assert "/emails/r1/decline" in html and "Deny" in html
+        assert "Don't add" not in html and "Don&#39;t add" not in html
+
+    def test_an_item_with_no_date_cannot_be_approved_so_it_is_not_offered_but_can_be_rescheduled(self, client, db_session):
+        self._held_back_without_a_date(db_session)
+
+        html = _section(client.get("/").text, "needs_review")
+
+        assert "/emails/nodate/approve\"" not in html  # approve would only ever fail
+        assert "/emails/nodate/approve-at" in html and "/emails/nodate/decline" in html
+
+    def test_rescheduling_adds_it_at_the_chosen_local_time_and_moves_it_to_to_check(self, client, db_session, calendar, monkeypatch):
+        monkeypatch.setattr(main, "detect_local_timezone", lambda: "America/Los_Angeles")
+        _completed_row(db_session, "r1", subject="Workshop signup", event_id=None)
+
+        response = client.post("/emails/r1/approve-at", data={"new_datetime": "2026-10-05T14:30"})
+
+        page = client.get("/").text
+        assert response.status_code == 200 and response.headers["HX-Refresh"] == "true"
+        assert calendar["created"][0]["deadline"] == datetime(2026, 10, 5, 14, 30, tzinfo=ZoneInfo("America/Los_Angeles"))
+        assert "Workshop signup" in _section(page, "to_check") and "Workshop signup" not in _section(page, "needs_review")
+
+    def test_an_item_with_no_date_can_be_added_by_rescheduling_it(self, client, db_session, calendar, monkeypatch):
+        monkeypatch.setattr(main, "detect_local_timezone", lambda: "America/Los_Angeles")
+        self._held_back_without_a_date(db_session)
+
+        client.post("/emails/nodate/approve-at", data={"new_datetime": "2026-10-05T09:00"})
+
+        assert "Vague deadline" in _section(client.get("/").text, "to_check")
+
+    def test_an_invalid_time_is_refused_and_creates_nothing(self, client, db_session, calendar):
+        _completed_row(db_session, "r1", event_id=None)
+
+        assert client.post("/emails/r1/approve-at", data={"new_datetime": "not a time"}).status_code == 400
+        assert client.post("/emails/r1/approve-at", data={}).status_code == 422
+        assert calendar["created"] == []
+
+    def test_rescheduling_something_already_on_the_calendar_or_unknown_is_refused(self, client, db_session, calendar):
+        _completed_row(db_session, "c1", event_id="cal-1")
+
+        assert client.post("/emails/c1/approve-at", data={"new_datetime": "2026-10-05T14:30"}).status_code == 400
+        assert client.post("/emails/nope/approve-at", data={"new_datetime": "2026-10-05T14:30"}).status_code == 404
+        assert calendar["created"] == []
+
+    def test_deny_moves_it_to_the_denied_or_skipped_section(self, client, db_session):
+        _completed_row(db_session, "r1", subject="Workshop signup", event_id=None)
+
+        client.post("/emails/r1/decline")
+
+        page = client.get("/").text
+        assert "Denied or skipped" in page
+        assert "Workshop signup" in _section(page, "skipped") and "Workshop signup" not in _section(page, "needs_review")

@@ -28,8 +28,16 @@
   <td class="verdict">{{ (email.created_at | to_local).strftime("%b %d, %Y %I:%M %p") }}</td>
   <td>
     {% if display_status(email) == "needs review" %}
-      <button class="vote" hx-post="/emails/{{ email.email_id }}/approve" hx-swap="none">✓ Approve</button>
-      <button class="vote" hx-post="/emails/{{ email.email_id }}/decline" hx-swap="none">✗ Don't add</button>
+      <div style="display:flex; flex-wrap:wrap; align-items:center; gap:4px;">
+        {% if email.extraction_deadline_parsed %}
+          <button class="vote" hx-post="/emails/{{ email.email_id }}/approve" hx-swap="none" title="Add it to your calendar at the date it found">✓ Approve</button>
+        {% endif %}
+        <form hx-post="/emails/{{ email.email_id }}/approve-at" hx-swap="none" style="display:inline-flex; gap:4px; align-items:center;">
+          <input type="datetime-local" name="new_datetime" required style="font-size:0.75rem; padding:2px;">
+          <button class="vote" type="submit" title="Add it to your calendar at a time you choose (its date is wrong, or it has none)">📅 Reschedule</button>
+        </form>
+        <button class="vote" hx-post="/emails/{{ email.email_id }}/decline" hx-swap="none" title="Leave it off your calendar">✗ Deny</button>
+      </div>
     {% elif email.calendar_event_id %}
       {# Live Calendar event. Reschedule and Remove stay available whether or not a verdict has been recorded.
          Reschedule alone records NO verdict (the user may just want a different time); ✗ Incorrect records a

@@ -186,3 +186,88 @@ class TestTheDashboardRoutesStillBehaveTheSame:
     def test_correct_and_remove_of_an_unknown_email_are_404(self, client, calendar):
         assert client.post("/emails/nope/correct", data={"is_correct": "true"}).status_code == 404
         assert client.post("/emails/nope/remove").status_code == 404
+
+
+class TestApproveAt:
+    """"Reschedule" on an item needing review: add it to the calendar at a time the person chooses."""
+
+    def _chosen(self):
+        return datetime(2026, 10, 5, 14, 30, tzinfo=timezone.utc)
+
+    def test_creates_the_event_at_the_chosen_time_and_records_it(self, db_session, calendar):
+        _row(db_session, subject="Workshop signup", context="Sign up by Friday", event_id=None)
+
+        row = review_actions.approve_at(db_session, "e1", self._chosen())
+
+        sent = calendar["created"][0]
+        assert sent["deadline"] == self._chosen() and sent["has_time"] is True
+        assert (sent["summary"], sent["description"]) == ("Workshop signup", "Sign up by Friday")
+        assert row.calendar_event_id == "new-event-id"
+        assert row.extraction_deadline_parsed == self._chosen() and row.extraction_has_time is True
+
+    def test_it_can_add_an_item_that_had_no_date_at_all_which_approve_cannot(self, db_session, calendar):
+        _row(db_session, event_id=None, has_deadline=False)
+        assert _refused(review_actions.approve, db_session, "e1").status_code == 400  # nothing to approve
+
+        review_actions.approve_at(db_session, "e1", self._chosen())
+
+        assert db_session.get(ProcessedEmail, "e1").calendar_event_id == "new-event-id"
+
+    def test_choosing_a_time_clears_the_implausible_date_warning(self, db_session, calendar):
+        _row(db_session, event_id=None)
+        row = db_session.get(ProcessedEmail, "e1")
+        row.is_implausible_date = True
+        db_session.commit()
+
+        review_actions.approve_at(db_session, "e1", self._chosen())
+
+        assert db_session.get(ProcessedEmail, "e1").is_implausible_date is False
+
+    def test_it_is_a_one_off_even_if_a_recurrence_was_extracted_for_another_date(self, db_session, calendar):
+        _row(db_session, event_id=None, recurring="RRULE:FREQ=MONTHLY")
+
+        review_actions.approve_at(db_session, "e1", self._chosen())
+
+        assert not calendar["created"][0].get("recurrence_rule")
+
+    def test_it_records_no_verdict(self, db_session, calendar):
+        _row(db_session, event_id=None)
+
+        assert review_actions.approve_at(db_session, "e1", self._chosen()).user_correction is None
+
+    def test_the_item_moves_from_needs_review_to_to_check(self, db_session, calendar):
+        _row(db_session, event_id=None)
+        assert repository.count_category(db_session, "needs_review") == 1
+
+        review_actions.approve_at(db_session, "e1", self._chosen())
+
+        assert repository.count_category(db_session, "needs_review") == 0
+        assert repository.count_category(db_session, "to_check") == 1
+
+    @pytest.mark.parametrize(
+        "setup",
+        [
+            pytest.param(dict(event_id="cal-1"), id="already-on-the-calendar"),
+            pytest.param(dict(event_id=None, has_deadline=False, action_type="needs_reply"), id="an-action-item-has-its-own-schedule"),
+        ],
+    )
+    def test_refuses_what_is_not_a_held_back_deadline_and_calls_nothing(self, db_session, calendar, setup):
+        _row(db_session, **setup)
+
+        error = _refused(review_actions.approve_at, db_session, "e1", self._chosen())
+
+        assert (error.status_code, error.detail) == (400, "Not a held-back item")
+        assert calendar["created"] == []
+
+    def test_refuses_an_item_already_denied_or_failed(self, db_session, calendar):
+        _row(db_session, "denied", event_id=None)
+        review_actions.decline(db_session, "denied")
+        repository.try_claim_email(db_session, "broke", "t", "s")
+        repository.mark_failed(db_session, "broke", "ValueError: bad")
+
+        assert _refused(review_actions.approve_at, db_session, "denied", self._chosen()).status_code == 400
+        assert _refused(review_actions.approve_at, db_session, "broke", self._chosen()).status_code == 400
+        assert calendar["created"] == []
+
+    def test_an_unknown_email_is_a_404(self, db_session, calendar):
+        assert _refused(review_actions.approve_at, db_session, "nope", self._chosen()).status_code == 404
