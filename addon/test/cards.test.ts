@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { renderError, renderHome } from "../src/cards";
-import { buildHomeModel, errorModel } from "../src/format";
+import { buildHomeModel, dateFieldName, errorModel } from "../src/format";
 import { count, fakeCardService, paramsOf, texts, type Recorder } from "./fakes";
 import { email, summary } from "./fixtures";
 
@@ -89,6 +89,23 @@ describe("renderHome buttons", () => {
 
   it("draws no button row for an item with nothing to do", () => {
     expect(count(withActions([]), "newButtonSet")).toBe(0);
+  });
+
+  it("draws a date/time field, named for the item, above the buttons when one of them needs it", () => {
+    const card = withActions(["approve_at", "decline"]);
+
+    expect(count(card, "newTextInput")).toBe(1);
+    expect(texts(card)).toContain(dateFieldName("r1"));
+  });
+
+  it("draws no date/time field when nothing offered needs one", () => {
+    expect(count(withActions(["approve", "decline"]), "newTextInput")).toBe(0);
+  });
+
+  it("draws only one date/time field even when two buttons on the same item both need one", () => {
+    // Not a case the API actually offers today (approve_at and reschedule never co-occur), but the
+    // rendering rule is "one item, one field" regardless of how many of its buttons need it.
+    expect(count(withActions(["approve_at", "reschedule"]), "newTextInput")).toBe(1);
   });
 });
 

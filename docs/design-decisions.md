@@ -257,7 +257,7 @@ add-on cannot disagree about what an action does; `/approve` and `/decline` had 
 move, so they got 20, checked against the pre-move code. The add-on's own logic is plain TypeScript with Google's services
 injected, and only the widget layout is left to a manual checklist.
 **Evidence.** Backend tests use real RS256 tokens verified against a fake key endpoint, and check that every
-write route refuses a missing or someone else's Google token; 92 add-on tests cover the logic, every way the
+write route refuses a missing or someone else's Google token; 113 add-on tests cover the logic, every way the
 API call can fail, the card layout against a recording fake of Google's card builder, and the real bundle
 run in a sandbox that stands in for Apps Script. A snapshot of the API's response shapes is checked from both
 sides, so neither can change without the other. Finally the real bundle was run over real HTTP against the

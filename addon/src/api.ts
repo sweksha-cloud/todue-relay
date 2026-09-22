@@ -31,16 +31,22 @@ export const SUMMARY_PATH = "/api/addon/summary";
 
 interface Route {
   path: (emailId: string) => string;
-  body?: object;
+  // A fixed body (vote_correct/vote_incorrect), or one built from the date/time the person typed
+  // in (the three actions ACTIONS_NEEDING_DATETIME names, in format.ts).
+  body?: object | ((newDatetime: string) => object);
 }
 
 const emailPath = (verb: string) => (emailId: string) => `/api/addon/emails/${encodeURIComponent(emailId)}/${verb}`;
+const datetimeBody = (newDatetime: string) => ({ new_datetime: newDatetime });
 
 /** Which endpoint each action the API can offer calls. */
 export const ACTION_ROUTES: Record<string, Route> = {
   approve: { path: emailPath("approve") },
+  approve_at: { path: emailPath("approve-at"), body: datetimeBody },
   decline: { path: emailPath("decline") },
   remove: { path: emailPath("remove") },
+  reschedule: { path: emailPath("reschedule"), body: datetimeBody },
+  schedule: { path: emailPath("schedule"), body: datetimeBody },
   vote_correct: { path: emailPath("vote"), body: { vote: "correct" } },
   vote_incorrect: { path: emailPath("vote"), body: { vote: "incorrect" } },
 };
@@ -101,10 +107,19 @@ export function fetchSummary(deps: ApiDeps): Summary {
   return parse<Summary>(call(deps, SUMMARY_PATH, "GET"));
 }
 
-export function runAction(deps: ApiDeps, emailId: string, action: string): ActionResult {
+export function runAction(deps: ApiDeps, emailId: string, action: string, newDatetime?: string): ActionResult {
   const route = ACTION_ROUTES[action];
   if (!route) throw new ApiError("parse", `This add-on does not know the action "${action}".`);
-  return parse<ActionResult>(call(deps, route.path(emailId), "POST", route.body ?? {}));
+  let body: object = {};
+  if (typeof route.body === "function") {
+    // format.ts's parseActionParameters already refused to build a request without one, so this
+    // is a defensive check against a future caller that skips that step, not the normal path.
+    if (!newDatetime) throw new ApiError("parse", `The "${action}" action needs a date and time.`);
+    body = route.body(newDatetime);
+  } else if (route.body) {
+    body = route.body;
+  }
+  return parse<ActionResult>(call(deps, route.path(emailId), "POST", body));
 }
 
 /** The real thing, wired to Apps Script's services. Only exercised inside Gmail. */

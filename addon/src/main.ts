@@ -34,11 +34,15 @@ function notify(text: string, card?: GoogleAppsScript.Card_Service.Card): Google
 }
 
 /** A button on an item was pressed: ask the API to do it, say what happened, and redraw the card. */
-function onAction(e: { parameters?: unknown }): GoogleAppsScript.Card_Service.ActionResponse {
-  const request = parseActionParameters(e.parameters);
-  if (!request) return notify("That button was not recognised.");
+function onAction(e: { parameters?: unknown; formInput?: Record<string, unknown> }): GoogleAppsScript.Card_Service.ActionResponse {
+  const request = parseActionParameters(e.parameters, e.formInput);
+  if (!request.ok) {
+    return notify(
+      request.reason === "missing_datetime" ? "Type a date and time first, then press the button again." : "That button was not recognised.",
+    );
+  }
   try {
-    const result = runAction(appsScriptDeps(), request.emailId, request.action);
+    const result = runAction(appsScriptDeps(), request.emailId, request.action, request.newDatetime);
     return notify(result.message, buildHomeCard());
   } catch (err) {
     // The card stays as it was; the person is told why, in the API's own words where it gave one.

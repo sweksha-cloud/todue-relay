@@ -6,11 +6,24 @@ import type { EmailView, RunView, Summary } from "./types";
 
 export const ACTION_LABELS: Record<string, string> = {
   approve: "Add to calendar",
+  approve_at: "Reschedule",
   decline: "Don't add",
   vote_correct: "Correct",
   vote_incorrect: "Incorrect",
   remove: "Remove",
+  reschedule: "Reschedule",
+  schedule: "Schedule",
 };
+
+// These three need a date/time the person types in before the button means anything — see
+// dateFieldName below. Every other action fires as soon as its button is pressed.
+export const ACTIONS_NEEDING_DATETIME = new Set(["approve_at", "reschedule", "schedule"]);
+
+/** The field name of the date/time TextInput cards.ts draws for one item, so a card with several
+ * items needing a date each get their own independent field instead of colliding on one. */
+export function dateFieldName(emailId: string): string {
+  return `new_datetime__${emailId}`;
+}
 
 export interface ItemButton {
   label: string;
@@ -19,10 +32,12 @@ export interface ItemButton {
 }
 
 export interface HomeItem {
+  emailId: string;
   title: string;
   subtitle: string | null;
   tag: string | null;
   buttons: ItemButton[];
+  needsDatetime: boolean;
 }
 
 export interface HomeSection {
@@ -53,7 +68,8 @@ export function itemFor(e: EmailView): HomeItem {
   else if (e.vote) tag = e.vote === "correct" ? "Marked correct" : "Marked incorrect";
   // Only the actions the API offered, in its order; one it offers that this version does not know is skipped.
   const buttons = e.actions.filter((a) => a in ACTION_LABELS).map((a) => ({ label: ACTION_LABELS[a] as string, emailId: e.email_id, action: a }));
-  return { title, subtitle: e.deadline_text, tag, buttons };
+  const needsDatetime = buttons.some((b) => ACTIONS_NEEDING_DATETIME.has(b.action));
+  return { emailId: e.email_id, title, subtitle: e.deadline_text, tag, buttons, needsDatetime };
 }
 
 export function moreText(total: number, shown: number): string | null {
@@ -117,15 +133,22 @@ export function errorModel(kind: ErrorKind, detail: string): ErrorModel {
 
 const KNOWN_ACTIONS = new Set(Object.keys(ACTION_LABELS));
 
-export interface ActionRequest {
-  emailId: string;
-  action: string;
-}
+export type ActionRequest =
+  | { ok: true; emailId: string; action: string; newDatetime?: string }
+  | { ok: false; reason: "unrecognised" | "missing_datetime" };
 
-/** Reads a button press's parameters (Apps Script passes them as strings), or null if they are not ours. */
-export function parseActionParameters(parameters: unknown): ActionRequest | null {
-  if (typeof parameters !== "object" || parameters === null) return null;
+/** Reads a button press's parameters (Apps Script passes them as strings) plus, for the three
+ * actions that need one, the date/time typed into that item's own field (formInput carries the
+ * current value of every TextInput on the card, keyed by field name — see dateFieldName). */
+export function parseActionParameters(parameters: unknown, formInput?: Record<string, unknown>): ActionRequest {
+  if (typeof parameters !== "object" || parameters === null) return { ok: false, reason: "unrecognised" };
   const { emailId, action } = parameters as Record<string, unknown>;
-  if (typeof emailId !== "string" || !emailId || typeof action !== "string" || !KNOWN_ACTIONS.has(action)) return null;
-  return { emailId, action };
+  if (typeof emailId !== "string" || !emailId || typeof action !== "string" || !KNOWN_ACTIONS.has(action)) {
+    return { ok: false, reason: "unrecognised" };
+  }
+  if (!ACTIONS_NEEDING_DATETIME.has(action)) return { ok: true, emailId, action };
+
+  const raw = formInput?.[dateFieldName(emailId)];
+  if (typeof raw !== "string" || !raw.trim()) return { ok: false, reason: "missing_datetime" };
+  return { ok: true, emailId, action, newDatetime: raw.trim() };
 }

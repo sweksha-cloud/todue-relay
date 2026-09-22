@@ -1,14 +1,12 @@
 # ToDue Relay Gmail add-on
 
 A home card in Gmail's side panel: what needs review, what's coming up on the calendar, your action
-items, and how the last run went, with buttons to add or decline a held-back item, mark an event
-correct or incorrect, or remove it. It is a second screen over the same data and the same actions as
-the htmx dashboard, which is unchanged.
+items, and how the last run went, with buttons to add, reschedule or decline a held-back item,
+schedule an action item, mark an event correct or incorrect, reschedule or remove it. It is a second
+screen over the same data and the same actions as the htmx dashboard, which is unchanged.
 
-**Status:** the code and its tests are done, and it has been run end to end (below), but it has **not yet
-been installed in a real Gmail**, so the manifest and the card layout are unproven against Google until
-the first install (steps below). Not built yet: Reschedule and Schedule (they need a date picker), and a
-card for the open email.
+**Status:** the code and its tests are done, and it has been run end to end (below) and installed in a
+real Gmail. Not built yet: a card for the open email.
 
 ## How it fits together
 
@@ -42,7 +40,7 @@ decides something is in tested code; the untested surface is only the layout of 
 
 ```
 npm install
-npm run typecheck && npm test      # 92 tests
+npm run typecheck && npm test      # 113 tests
 npm run build                      # writes dist/Code.js and dist/appsscript.json
 ```
 
@@ -93,8 +91,9 @@ Each later change: `npm run push`, reload Gmail.
 - [ ] An empty list says so; more than ten items shows "+ N more in the dashboard".
 - [ ] Low-confidence and odd-date items carry their tag.
 - [ ] Refresh reloads the card in place.
-- [ ] On a fake-data item needing review, Add to calendar creates an event (then Correct / Incorrect / Remove appear), and Don't add removes it from the list.
-- [ ] A verdict is given once: after Correct or Incorrect only Remove is left.
+- [ ] On a fake-data item needing review, Add to calendar creates an event (then Correct / Incorrect / Reschedule / Remove appear), and Don't add removes it from the list.
+- [ ] Typing a date/time and pressing Reschedule on a needs-review item, or Schedule on an action item, creates an event at that time; leaving the field blank and pressing the button says so instead of doing nothing silently.
+- [ ] A verdict is given once: after Correct or Incorrect, Reschedule and Remove are still offered.
 - [ ] Set `API_BASE_URL` wrong: an error card names the problem and what to do.
 - [ ] Stop the API: a "could not reach" card, not a blank panel.
 
@@ -119,7 +118,6 @@ Each later change: `npm run push`, reload Gmail.
 
 ## Next
 
-The card for the open email (what was extracted from it, with the same buttons), Reschedule and Schedule
-(a date picker), and deploying the API as a Lambda function URL in the SAM stack so it does not depend on a
-laptop. That needs the CI deploy role's permissions extended first, and it is best done after the first
-real install has shown the card works.
+The card for the open email (what was extracted from it, with the same buttons), and deploying the API
+as a Lambda function URL in the SAM stack so it does not depend on a laptop. That needs the CI deploy
+role's permissions extended first.

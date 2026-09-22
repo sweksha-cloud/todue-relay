@@ -208,7 +208,7 @@ TEST_DATABASE_URL=postgresql+psycopg://postgres:test@localhost:55432/testdb \
   python -m pytest tests/ -v
 ```
 
-465 tests across 22 files (plus 92 for the Gmail add-on), covering date and timezone parsing, pre-filter
+488 tests across 22 files (plus 113 for the Gmail add-on), covering date and timezone parsing, pre-filter
 scoring, LLM response validation (including 429 and 5xx handling), Calendar event
 construction (including recurrence), duplicate-deadline matching, the idempotency
 claim logic and retry cap, the daily call budget and dry-run mode (driving the
@@ -318,7 +318,7 @@ backend/
   requirements.txt              # full app (pipeline + dashboard)
   requirements-lambda.txt       # pipeline-only, for the Lambda package
   requirements-dev.txt
-  tests/                        # 465 tests, run against real Postgres
+  tests/                        # 488 tests, run against real Postgres
 addon/                          # Gmail add-on (Apps Script, TypeScript): a read-only home card
 docs/
   design-decisions.md           # 23 decisions: what else was considered, and the evidence

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ACTION_LABELS, buildHomeModel, errorModel, itemFor, moreText, parseActionParameters, runLine, truncate } from "../src/format";
+import { ACTION_LABELS, buildHomeModel, dateFieldName, errorModel, itemFor, moreText, parseActionParameters, runLine, truncate } from "../src/format";
 import { email, summary } from "./fixtures";
 
 describe("truncate", () => {
@@ -105,7 +105,19 @@ describe("item buttons", () => {
     expect(itemFor(email({ actions: ["snooze", "remove"] })).buttons.map((b) => b.action)).toEqual(["remove"]);
   });
   it("has a label for every action the API can offer", () => {
-    expect(Object.keys(ACTION_LABELS).sort()).toEqual(["approve", "decline", "remove", "vote_correct", "vote_incorrect"]);
+    expect(Object.keys(ACTION_LABELS).sort()).toEqual([
+      "approve", "approve_at", "decline", "remove", "reschedule", "schedule", "vote_correct", "vote_incorrect",
+    ]);
+  });
+  it("carries the item's own email id, for the date field and for every button", () => {
+    const item = itemFor(email({ email_id: "r1", actions: ["remove"] }));
+    expect(item.emailId).toBe("r1");
+  });
+  it("asks for a date/time field when a button needs one, and not otherwise", () => {
+    expect(itemFor(email({ actions: ["approve", "decline"] })).needsDatetime).toBe(false);
+    expect(itemFor(email({ actions: ["approve_at", "decline"] })).needsDatetime).toBe(true);
+    expect(itemFor(email({ actions: ["reschedule", "remove"] })).needsDatetime).toBe(true);
+    expect(itemFor(email({ actions: ["schedule", "decline"] })).needsDatetime).toBe(true);
   });
 });
 
@@ -118,7 +130,9 @@ describe("the verdict tag", () => {
 });
 
 describe("parseActionParameters", () => {
-  it("reads a button press", () => expect(parseActionParameters({ emailId: "e1", action: "remove" })).toEqual({ emailId: "e1", action: "remove" }));
+  it("reads a button press that needs no date", () => {
+    expect(parseActionParameters({ emailId: "e1", action: "remove" })).toEqual({ ok: true, emailId: "e1", action: "remove" });
+  });
   it.each([
     ["nothing", undefined],
     ["a string", "remove"],
@@ -126,5 +140,36 @@ describe("parseActionParameters", () => {
     ["an empty id", { emailId: "", action: "remove" }],
     ["an unknown action", { emailId: "e1", action: "explode" }],
     ["a non-string id", { emailId: 5, action: "remove" }],
-  ])("rejects %s", (_name, value) => expect(parseActionParameters(value)).toBeNull());
+  ])("rejects %s as unrecognised", (_name, value) => {
+    expect(parseActionParameters(value)).toEqual({ ok: false, reason: "unrecognised" });
+  });
+
+  describe("an action that needs a date/time", () => {
+    it("reads it from that item's own field in formInput", () => {
+      const formInput = { [dateFieldName("e1")]: "2026-10-05 14:30" };
+
+      expect(parseActionParameters({ emailId: "e1", action: "reschedule" }, formInput)).toEqual({
+        ok: true, emailId: "e1", action: "reschedule", newDatetime: "2026-10-05 14:30",
+      });
+    });
+    it("trims surrounding whitespace", () => {
+      const formInput = { [dateFieldName("e1")]: "  2026-10-05 14:30  " };
+      const result = parseActionParameters({ emailId: "e1", action: "schedule" }, formInput);
+
+      expect(result).toEqual({ ok: true, emailId: "e1", action: "schedule", newDatetime: "2026-10-05 14:30" });
+    });
+    it("only reads that item's own field, not another item's", () => {
+      const formInput = { [dateFieldName("other-item")]: "2026-10-05 14:30" };
+
+      expect(parseActionParameters({ emailId: "e1", action: "reschedule" }, formInput)).toEqual({ ok: false, reason: "missing_datetime" });
+    });
+    it.each([
+      ["formInput is missing entirely", undefined],
+      ["the field is missing", {}],
+      ["the field is blank", { [dateFieldName("e1")]: "" }],
+      ["the field is only whitespace", { [dateFieldName("e1")]: "   " }],
+    ])("reports missing_datetime when %s", (_name, formInput) => {
+      expect(parseActionParameters({ emailId: "e1", action: "approve_at" }, formInput)).toEqual({ ok: false, reason: "missing_datetime" });
+    });
+  });
 });

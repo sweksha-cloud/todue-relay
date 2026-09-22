@@ -158,7 +158,28 @@ describe("runAction", () => {
   });
 
   it("knows a route for every action the labels offer", () => {
-    expect(Object.keys(ACTION_ROUTES).sort()).toEqual(["approve", "decline", "remove", "vote_correct", "vote_incorrect"]);
+    expect(Object.keys(ACTION_ROUTES).sort()).toEqual([
+      "approve", "approve_at", "decline", "remove", "reschedule", "schedule", "vote_correct", "vote_incorrect",
+    ]);
+  });
+
+  it("sends the chosen date/time as new_datetime for approve_at, reschedule and schedule", () => {
+    for (const action of ["approve_at", "reschedule", "schedule"]) {
+      const { all, seen } = post();
+
+      runAction(all, "abc123", action, "2026-10-05 14:30");
+
+      expect(seen[0]?.url).toBe(`https://api.example.com/api/addon/emails/abc123/${action.replace("_", "-")}`);
+      expect(seen[0]?.options.payload).toBe('{"new_datetime":"2026-10-05 14:30"}');
+      expect(seen[0]?.options.headers["Content-Type"]).toBe("application/json");
+    }
+  });
+
+  it("refuses to call a date/time action with no date/time, instead of sending an empty one", () => {
+    const { all, seen } = post();
+
+    expect(failureOf(() => runAction(all, "e1", "reschedule")).kind).toBe("parse");
+    expect(seen).toHaveLength(0);
   });
 
   it("treats a refused account the same way as for the summary", () => {

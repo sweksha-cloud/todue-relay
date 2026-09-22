@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { beforeAll, describe, expect, it } from "vitest";
+import { dateFieldName } from "../src/format";
 import { called, fakeCardService, texts } from "./fakes";
 import { actionResult, email, summary } from "./fixtures";
 
@@ -185,5 +186,56 @@ describe("pressing a button, as Gmail runs it", () => {
     const { run } = load({ props: {} });
 
     expect(texts(run("onAction", press("remove")))).toContain("API_BASE_URL is not set.");
+  });
+});
+
+describe("pressing a Reschedule / Schedule button, as Gmail sends the date/time field", () => {
+  const pressWithDate = (action: string, newDatetime: string, emailId = "r1") => ({
+    parameters: { emailId, action },
+    formInput: { [dateFieldName(emailId)]: newDatetime },
+  });
+
+  it.each(["approve_at", "reschedule", "schedule"])("POSTs %s with the typed date/time as new_datetime", (action) => {
+    const { run, world } = load({ body: actionResult({ message: "Rescheduled" }) });
+
+    const response = run("onAction", pressWithDate(action, "2026-10-05 14:30"));
+
+    expect(world.fetches[0]).toMatchObject({
+      url: `https://api.example.com/api/addon/emails/r1/${action.replace("_", "-")}`,
+      method: "post",
+      payload: '{"new_datetime":"2026-10-05 14:30"}',
+    });
+    expect(texts(response)).toContain("Rescheduled");
+    expect(called(response, "updateCard")).toBe(true);
+  });
+
+  it("does not call the API, and says so, when the date/time field was left blank", () => {
+    const { run, world } = load();
+
+    const response = run("onAction", { parameters: { emailId: "r1", action: "reschedule" }, formInput: { [dateFieldName("r1")]: "" } });
+
+    expect(world.fetches).toHaveLength(0);
+    expect(texts(response)).toContain("Type a date and time first, then press the button again.");
+  });
+
+  it("does not call the API when formInput is entirely absent (the field never rendered)", () => {
+    const { run, world } = load();
+
+    const response = run("onAction", { parameters: { emailId: "r1", action: "schedule" } });
+
+    expect(world.fetches).toHaveLength(0);
+    expect(texts(response)).toContain("Type a date and time first, then press the button again.");
+  });
+
+  it("reads the pressed item's own field, not another item's left over on the same card", () => {
+    const { run, world } = load();
+
+    const response = run("onAction", {
+      parameters: { emailId: "r1", action: "reschedule" },
+      formInput: { [dateFieldName("other-item")]: "2026-10-05 14:30" },
+    });
+
+    expect(world.fetches).toHaveLength(0);
+    expect(texts(response)).toContain("Type a date and time first, then press the button again.");
   });
 });

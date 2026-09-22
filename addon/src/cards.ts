@@ -1,6 +1,7 @@
 // Turns the view model into Google's card widgets. Deliberately thin: no decisions live here, so the
 // part that can only be checked by looking at Gmail stays as small as possible.
 
+import { dateFieldName } from "./format";
 import type { ErrorModel, HomeModel } from "./format";
 
 type Card = GoogleAppsScript.Card_Service.Card;
@@ -24,6 +25,16 @@ export function renderHome(model: HomeModel): Card {
       if (item.tag) widget.setTopLabel(item.tag);
       if (item.subtitle) widget.setBottomLabel(item.subtitle);
       section.addWidget(widget);
+      if (item.needsDatetime) {
+        // One of this item's buttons (Reschedule / Schedule) needs a date/time typed in first.
+        // Its own field name (dateFieldName) keeps it from colliding with any other item's field
+        // on the same card; onAction reads it back by the emailId on the button that was pressed.
+        section.addWidget(
+          CardService.newTextInput()
+            .setFieldName(dateFieldName(item.emailId))
+            .setTitle("Date & time (e.g. 2026-10-05 14:30)"),
+        );
+      }
       if (item.buttons.length > 0) {
         const set = CardService.newButtonSet();
         for (const b of item.buttons) {
