@@ -43,6 +43,13 @@
     <div class="num">{{ "%.0f%%"|format(correction_rate * 100) if correction_rate is not none else "—" }}</div>
     <div class="label">Correction rate ({{ "so far" if correction_rate is not none else "no reviews yet" }})</div>
   </div>
+  <div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px; margin-left:auto;">
+    <button class="vote" hx-post="/waiting" hx-target="#waiting-result" hx-swap="innerHTML" hx-disabled-elt="this" hx-indicator="#waiting-spinner">Check waiting mail</button>
+    <div id="waiting-result">
+      <span class="verdict">Emails waiting to be processed. Reads Gmail only; costs no Gemini quota.</span>
+    </div>
+    <div id="waiting-spinner" class="htmx-indicator verdict">Checking Gmail…</div>
+  </div>
 </div>
 
 <div class="card">
@@ -62,16 +69,6 @@
     {{ llm_usage.calls_this_month }} calls this month. Counts this pipeline's calls only —
     <a href="/metrics">see Metrics</a>.
   </p>
-</div>
-
-<div class="card">
-  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-    <div id="waiting-result">
-      <span class="verdict">Emails waiting to be processed — check on demand. Reads Gmail only; costs no Gemini quota.</span>
-    </div>
-    <button class="vote" hx-post="/waiting" hx-target="#waiting-result" hx-swap="innerHTML" hx-disabled-elt="this" hx-indicator="#waiting-spinner">Check waiting mail</button>
-  </div>
-  <div id="waiting-spinner" class="htmx-indicator verdict" style="margin-top:6px;">Checking Gmail…</div>
 </div>
 
 {% for s in sections %}
