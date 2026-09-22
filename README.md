@@ -65,7 +65,7 @@ flowchart LR
 | Timezones silently shift real events | Explicit `CALENDAR_TIMEZONE` (never the runner's clock), offsets attached to event times, and regression tests for every bug found in real data (`EST/EDT`, spelled-out regions, `GMT+2` sign inversion) | `app/date_utils.py`, `tests/test_date_utils.py` |
 | The free Gemini tier allows 20 calls a day | A per-day budget (resets midnight Pacific), a retry cap where Gemini's 429 and 5xx errors don't count against an email (for a bounded time), and a `--dry-run` that spends nothing. See [Gemini quota](#gemini-quota) | `app/pipeline.py`, `app/metrics.py` |
 | CI runners and Lambda have no persistent disk | The Google OAuth token lives in Postgres, not a local file; the local copy is only a best-effort dev mirror | `app/google_auth.py` |
-| Least privilege | Gmail access is `readonly`; Calendar access is events-only; workflows run with `contents: read` | `app/config.py`, `.github/workflows/` |
+| Least privilege | Gmail is `gmail.modify` (needed for the dashboard's "move to trash" button; the scheduled pipeline itself only ever reads); Calendar access is events-only; workflows run with `contents: read` | `app/config.py`, `.github/workflows/` |
 
 The reasoning behind these, with the alternatives considered and the evidence, is in
 [docs/design-decisions.md](docs/design-decisions.md).
@@ -208,7 +208,7 @@ TEST_DATABASE_URL=postgresql+psycopg://postgres:test@localhost:55432/testdb \
   python -m pytest tests/ -v
 ```
 
-400 tests across 21 files (plus 92 for the Gmail add-on), covering date and timezone parsing, pre-filter
+465 tests across 22 files (plus 92 for the Gmail add-on), covering date and timezone parsing, pre-filter
 scoring, LLM response validation (including 429 and 5xx handling), Calendar event
 construction (including recurrence), duplicate-deadline matching, the idempotency
 claim logic and retry cap, the daily call budget and dry-run mode (driving the
@@ -295,7 +295,7 @@ aws/
 backend/
   app/
     pipeline.py                 # orchestrates fetch > filter > extract > route > track
-    gmail_client.py             # fetch (read-only)
+    gmail_client.py             # fetch, plus trash_message (the dashboard's one write op)
     filters.py                  # cheap pre-filter before any LLM call
     llm_client.py               # Gemini extraction, rate-limited
     schemas.py, prompts.py      # structured-output contract and prompt
@@ -318,7 +318,7 @@ backend/
   requirements.txt              # full app (pipeline + dashboard)
   requirements-lambda.txt       # pipeline-only, for the Lambda package
   requirements-dev.txt
-  tests/                        # 400 tests, run against real Postgres
+  tests/                        # 465 tests, run against real Postgres
 addon/                          # Gmail add-on (Apps Script, TypeScript): a read-only home card
 docs/
   design-decisions.md           # 23 decisions: what else was considered, and the evidence

@@ -1,4 +1,6 @@
-"""Read-only Gmail authentication and message fetching."""
+"""Gmail authentication and message fetching. Reading is the main job here; trash_message is the
+one write operation, needing the wider `gmail.modify` scope (see app/config.py GOOGLE_SCOPES and
+docs/design-decisions.md decision 28)."""
 
 from __future__ import annotations
 
@@ -24,7 +26,7 @@ class EmailMessage:
 
 
 def get_gmail_service():
-    """Return an authenticated, read-only Gmail API service.
+    """Return an authenticated Gmail API service.
 
     Shares OAuth (and its cached token) with the Calendar client — see
     app/google_auth.py — so there's one consent flow for both APIs.
@@ -180,3 +182,19 @@ def fetch_messages_by_ids(service, message_ids: list[str]) -> list[EmailMessage]
         messages.append(_to_email_message(msg))
 
     return messages
+
+
+def trash_message(service, message_id: str) -> None:
+    """Move a message to Gmail's Trash — recoverable there for 30 days (Gmail's own default),
+    exactly what clicking Gmail's own trash icon does. Needs the gmail.modify scope; every other
+    function in this module only ever reads.
+
+    Idempotent, the same reasoning as calendar_client.delete_event: a message already trashed, or
+    already gone entirely (404), means the goal (not in the inbox) is already true, so that is not
+    treated as a failure. Any other error still raises.
+    """
+    try:
+        service.users().messages().trash(userId="me", id=message_id).execute()
+    except HttpError as e:
+        if e.resp.status != 404:
+            raise

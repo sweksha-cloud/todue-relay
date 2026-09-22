@@ -8,5 +8,6 @@
       <button class="vote" type="submit" title="Create a Calendar event at this date and time">📅 Schedule</button>
     </form>
     <button class="vote" hx-post="/emails/{{ item.email_id }}/decline" hx-swap="none" title="Not worth acting on">✗ Dismiss</button>
+    <button class="vote" hx-post="/emails/{{ item.email_id }}/trash" hx-swap="none" hx-confirm="Move this email to Gmail's trash? (Recoverable there for 30 days.)" title="Move the source email to Gmail's trash">📧🗑 Trash email</button>
   </div>
 </li>

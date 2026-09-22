@@ -271,3 +271,42 @@ class TestApproveAt:
 
     def test_an_unknown_email_is_a_404(self, db_session, calendar):
         assert _refused(review_actions.approve_at, db_session, "nope", self._chosen()).status_code == 404
+
+
+class TestTrashEmail:
+    def test_trashes_the_source_message_and_hides_the_row(self, db_session, calendar, gmail):
+        _row(db_session, "e1", event_id="cal-1")
+
+        row = review_actions.trash_email(db_session, "e1")
+
+        assert gmail["trashed"] == ["e1"]
+        assert row.error_message == repository.TRASHED_MESSAGE
+        assert repository.list_recent_emails(db_session) == []
+
+    def test_leaves_a_live_calendar_event_untouched(self, db_session, calendar, gmail):
+        _row(db_session, "e1", event_id="cal-1")
+
+        row = review_actions.trash_email(db_session, "e1")
+
+        assert row.calendar_event_id == "cal-1"  # unlike Remove, this never touches the event
+        assert calendar["deleted"] == []
+
+    def test_leaves_an_existing_vote_untouched(self, db_session, calendar, gmail):
+        _row(db_session, "e1", event_id="cal-1")
+        review_actions.record_vote(db_session, "e1", True)
+
+        row = review_actions.trash_email(db_session, "e1")
+
+        assert row.user_correction is True
+
+    def test_works_on_an_action_item_with_no_calendar_event_at_all(self, db_session, calendar, gmail):
+        _row(db_session, "a1", event_id=None, has_deadline=False, action_type="needs_reply")
+
+        row = review_actions.trash_email(db_session, "a1")
+
+        assert gmail["trashed"] == ["a1"]
+        assert repository.count_action_items(db_session) == 0
+
+    def test_an_unknown_email_is_a_404_and_gmail_is_never_called(self, db_session, gmail):
+        assert _refused(review_actions.trash_email, db_session, "nope").status_code == 404
+        assert gmail["trashed"] == []

@@ -357,6 +357,32 @@ swallowing another's emails, a button not reloading, paging one section resettin
 caught by the test meant for it.
 
 
+### 28. A "move to trash" button, and widening Gmail access on purpose
+**The ask.** A button next to every row to get rid of the source email itself, not just hide it
+from the dashboard or remove its Calendar event — those two already existed (Dismiss, Remove) and
+neither touches Gmail at all.
+**The scope trade-off, stated plainly.** Gmail access was `gmail.readonly` (decision 19): the
+scheduled pipeline never writes to Gmail, and that was a real selling point. Trash needs
+`gmail.modify`, a real widening. The choice made: Trash only, never a permanent, bypass-Trash
+delete — the same as clicking Gmail's own trash icon, recoverable there for 30 days (Gmail's own
+default, not something this project controls). The **scheduled pipeline still only ever reads**;
+the new capability is used from exactly one place, an explicit, user-initiated dashboard click.
+**Deliberately orthogonal to the other two actions.** Trashing the email does not touch an
+existing Calendar event, a recorded vote, or the extraction's status beyond hiding the row — "get
+rid of the email" and "get rid of the calendar event" are different intents, so they stay two
+separate buttons (Trash and Remove) that can be used together or alone.
+**How it hides the row.** Reuses the exact mechanism Remove already established:
+`not_removed()`'s message check, which every listing query (the category sections *and* Action
+Items) already filters through — one new message, `TRASHED_MESSAGE`, added to the same set. No
+new column, no per-list-type special case.
+**Idempotent, the same reasoning as decision-25's era Calendar delete fix:** trashing an
+already-trashed (or already-gone) message returns 404 from Gmail; treated as success, since the
+goal ("not in the inbox") is already true.
+**Cost.** Every user of the app must re-run the OAuth consent flow once (`reauth_google`) before
+this button works, since a token issued under the old, narrower scope keeps refreshing under that
+same narrower grant — only a fresh consent grants a new scope.
+
+
 ---
 
 ## Scaling to other users (a plan; not built)

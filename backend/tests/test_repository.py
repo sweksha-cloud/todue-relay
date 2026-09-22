@@ -771,3 +771,42 @@ class TestCategoriesPartitionTheDashboardList:
         everywhere = set().union(*[{r.email_id for r in repository.list_category(db_session, k, limit=1000)} for k in CATEGORY_KEYS])
 
         assert "removed" not in everywhere and "todo" not in everywhere
+
+
+class TestTrashEmail:
+    def test_hides_the_row_from_the_recent_emails_list(self, db_session):
+        repository.try_claim_email(db_session, "e1", "t", "s")
+        repository.mark_completed(
+            db_session, "e1",
+            ExtractionResult(email_id="e1", event_name="s", deadline_date_raw="in 3 days",
+                             deadline_date=datetime.now(timezone.utc) + timedelta(days=3),
+                             source_context="c", confidence="high", action_type="deadline"),
+            calendar_event_id="cal-1",
+        )
+
+        row = repository.trash_email(db_session, "e1")
+
+        assert row.error_message == repository.TRASHED_MESSAGE
+        assert row.calendar_event_id == "cal-1"  # untouched — Trash is not Remove
+        assert repository.list_recent_emails(db_session) == []
+        assert repository.count_recent_emails(db_session) == 0
+
+    def test_hides_the_row_from_action_items_too(self, db_session):
+        repository.try_claim_email(db_session, "a1", "t", "s")
+        repository.mark_completed(
+            db_session, "a1",
+            ExtractionResult(email_id="a1", event_name="s", deadline_date_raw=None, deadline_date=None,
+                             source_context="c", confidence="low", action_type="needs_reply"),
+            calendar_event_id=None,
+        )
+
+        repository.trash_email(db_session, "a1")
+
+        assert repository.list_action_items(db_session) == []
+        assert repository.count_action_items(db_session) == 0
+
+    def test_an_unknown_email_raises(self, db_session):
+        import pytest
+
+        with pytest.raises(ValueError):
+            repository.trash_email(db_session, "nope")

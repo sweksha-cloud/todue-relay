@@ -73,5 +73,10 @@
         <span class="verdict">Marked {{ "correct" if email.user_correction else "incorrect" }}</span>
       {% endif %}
     {% endif %}
+    {# Always offered, whatever the row's status: trashing the SOURCE EMAIL is independent of any
+       verdict, Calendar event or review decision above — those are about the extraction; this is
+       about the email itself. Recoverable in Gmail's own Trash for 30 days, never a permanent
+       delete (docs/design-decisions.md, decision 28). #}
+    <button class="vote" hx-post="/emails/{{ email.email_id }}/trash" hx-swap="none" hx-confirm="Move this email to Gmail's trash? (Recoverable there for 30 days.)" title="Move the source email to Gmail's trash">📧🗑 Trash email</button>
   </td>
 </tr>

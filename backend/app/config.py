@@ -8,11 +8,14 @@ load_dotenv()
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 CREDENTIALS_DIR = BACKEND_DIR / "credentials"
 
-# Gmail read-only (never modifies/deletes mail) + Calendar events write
-# (create/update events only, not full calendar management). One combined
-# OAuth flow/token so you only consent once.
+# Gmail: read almost everything, and the one write op this project uses (moving a message to
+# Trash — recoverable there for 30 days, same as Gmail's own trash icon; never a permanent,
+# bypass-Trash delete). Widened from gmail.readonly on 2026-09-22 specifically for the dashboard's
+# "move to trash" button — see docs/design-decisions.md, decision 28, for the trade-off.
+# + Calendar events write (create/update events only, not full calendar management).
+# One combined OAuth flow/token so you only consent once.
 GOOGLE_SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/calendar.events",
 ]
 

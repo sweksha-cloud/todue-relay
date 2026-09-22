@@ -520,7 +520,8 @@ def reschedule_email(
 # a vote carry the legacy text, so both are recognised.
 REMOVED_BY_USER_MESSAGE = "removed from calendar by user"
 _LEGACY_REMOVED_BY_USER_MESSAGE = "removed from calendar by user (marked incorrect)"
-_REMOVED_MESSAGES = (REMOVED_BY_USER_MESSAGE, _LEGACY_REMOVED_BY_USER_MESSAGE)
+TRASHED_MESSAGE = "source email moved to Gmail trash"
+_REMOVED_MESSAGES = (REMOVED_BY_USER_MESSAGE, _LEGACY_REMOVED_BY_USER_MESSAGE, TRASHED_MESSAGE)
 
 
 def remove_calendar_event(session: Session, email_id: str) -> ProcessedEmail:
@@ -543,6 +544,27 @@ def remove_calendar_event(session: Session, email_id: str) -> ProcessedEmail:
     row.calendar_event_id = None
     row.error_message = REMOVED_BY_USER_MESSAGE
     row.completed_at = datetime.now(timezone.utc)
+    session.commit()
+    session.refresh(row)
+    return row
+
+
+def trash_email(session: Session, email_id: str) -> ProcessedEmail:
+    """The "move to trash" path: the Gmail message itself is trashed by the caller
+    (gmail_client.trash_message) — this records that outcome and hides the row everywhere on the
+    dashboard (via not_removed(), the same mechanism Remove uses, in _REMOVED_MESSAGES above).
+
+    Deliberately orthogonal to Remove: trashing the source email is not a statement about the
+    extraction or an existing Calendar event, so calendar_event_id and user_correction are both
+    left untouched. If the email also has a live event the user wants gone, Remove is the
+    separate action for that.
+    """
+    row = session.get(ProcessedEmail, email_id)
+    if row is None:
+        raise ValueError(f"No such email {email_id}")
+
+    row.status = ProcessingStatus.SKIPPED
+    row.error_message = TRASHED_MESSAGE
     session.commit()
     session.refresh(row)
     return row

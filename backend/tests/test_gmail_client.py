@@ -1,6 +1,13 @@
 import pytest
+from googleapiclient.errors import HttpError
 
-from app.gmail_client import _has_calendar_invite, _to_email_message
+from app.gmail_client import _has_calendar_invite, _to_email_message, trash_message
+
+
+def _http_error(status: int) -> HttpError:
+    from types import SimpleNamespace
+
+    return HttpError(resp=SimpleNamespace(status=status, reason="x"), content=b"{}")
 
 
 class TestHasCalendarInvite:
@@ -180,3 +187,32 @@ class TestToEmailMessage:
             },
         }
         assert _to_email_message(msg).already_on_calendar is False
+
+
+class TestTrashMessage:
+    def test_trashes_the_given_message(self):
+        from unittest.mock import MagicMock
+
+        service = MagicMock()
+
+        trash_message(service, "e1")
+
+        service.users().messages().trash.assert_called_with(userId="me", id="e1")
+
+    def test_a_message_already_gone_is_treated_as_success(self):
+        from unittest.mock import MagicMock
+
+        service = MagicMock()
+        service.users().messages().trash().execute.side_effect = _http_error(404)
+
+        trash_message(service, "already-gone")  # must not raise
+
+    @pytest.mark.parametrize("status", [400, 401, 403, 500, 503])
+    def test_a_real_failure_still_raises(self, status):
+        from unittest.mock import MagicMock
+
+        service = MagicMock()
+        service.users().messages().trash().execute.side_effect = _http_error(status)
+
+        with pytest.raises(HttpError):
+            trash_message(service, "e1")

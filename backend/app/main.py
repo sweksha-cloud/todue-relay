@@ -365,6 +365,17 @@ def remove_email(request: Request, email_id: str, db: Session = Depends(get_db))
     return _refresh()
 
 
+@app.post("/emails/{email_id}/trash", response_class=HTMLResponse)
+def trash_email(request: Request, email_id: str, db: Session = Depends(get_db)):
+    """Move the source Gmail message to Trash (recoverable there for 30 days) and hide the row.
+    Independent of Remove: a live Calendar event, if there is one, is left alone."""
+    try:
+        review_actions.trash_email(db, email_id)
+    except review_actions.ActionError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    return _refresh()
+
+
 @app.post("/emails/{email_id}/approve", response_class=HTMLResponse)
 def approve_email(request: Request, email_id: str, db: Session = Depends(get_db)):
     """Low-confidence 'needs review' checkmark: create the Calendar event

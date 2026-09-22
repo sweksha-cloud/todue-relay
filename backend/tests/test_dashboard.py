@@ -1008,3 +1008,57 @@ class TestWhatAndWhenColumns:
         html = client.get("/").text
 
         assert "no date" in html
+
+
+class TestTrashEmailButton:
+    """Trash is offered next to every row, independent of what section it's in, and independent
+    of whether it has a Calendar event, a vote, or is an action item."""
+
+    def test_offered_on_a_to_check_row(self, client, db_session):
+        _completed_row(db_session, "e1", event_id="cal-1")
+
+        html = _section(client.get("/").text, "to_check")
+
+        assert "/emails/e1/trash" in html and "Trash email" in html
+
+    def test_offered_on_a_needs_review_row(self, client, db_session):
+        _completed_row(db_session, "r1", event_id=None)
+
+        html = _section(client.get("/").text, "needs_review")
+
+        assert "/emails/r1/trash" in html
+
+    def test_offered_on_a_failed_row(self, client, db_session):
+        repository.try_claim_email(db_session, "f1", "t", "s")
+        repository.mark_failed(db_session, "f1", "ValueError: bad")
+
+        html = _section(client.get("/").text, "failed")
+
+        assert "/emails/f1/trash" in html
+
+    def test_offered_on_an_action_item(self, client, db_session):
+        _action_item(db_session, "a1")
+
+        html = client.get("/").text
+
+        assert "/emails/a1/trash" in html
+
+    def test_trashing_moves_the_gmail_message_and_hides_the_row(self, client, db_session, calendar_calls, gmail):
+        _completed_row(db_session, "e1", subject="Nominations due", event_id="cal-1")
+
+        response = client.post("/emails/e1/trash")
+
+        assert response.status_code == 200 and response.headers["HX-Refresh"] == "true"
+        assert gmail["trashed"] == ["e1"]
+        assert "Nominations due" not in client.get("/").text
+
+    def test_trashing_does_not_delete_the_calendar_event(self, client, db_session, calendar_calls, gmail):
+        _completed_row(db_session, "e1", event_id="cal-1")
+
+        client.post("/emails/e1/trash")
+
+        assert calendar_calls["deleted"] == []
+
+    def test_trashing_an_unknown_email_is_a_404(self, client, gmail):
+        assert client.post("/emails/nope/trash").status_code == 404
+        assert gmail["trashed"] == []

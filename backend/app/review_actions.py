@@ -13,7 +13,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from app import calendar_client
+from app import calendar_client, gmail_client
 from app.db import repository
 from app.db.models import ActionType, ProcessedEmail, ProcessingStatus
 
@@ -104,3 +104,14 @@ def decline(db: Session, email_id: str) -> ProcessedEmail:
     except ValueError:
         raise ActionError(404, "No such email") from None
     return _get(db, email_id)
+
+
+def trash_email(db: Session, email_id: str) -> ProcessedEmail:
+    """Move the source Gmail message to Trash (recoverable there for 30 days — the same thing
+    Gmail's own trash icon does, never a permanent delete) and hide the row everywhere on the
+    dashboard. Deliberately orthogonal to Remove: this is about the email, not about an existing
+    Calendar event or the extraction's accuracy — either of those stays untouched."""
+    row = _get(db, email_id)
+    service = gmail_client.get_gmail_service()
+    gmail_client.trash_message(service, row.email_id)
+    return repository.trash_email(db, email_id)
