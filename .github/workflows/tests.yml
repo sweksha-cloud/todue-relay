@@ -50,12 +50,12 @@ jobs:
           TEST_DATABASE_URL: postgresql+psycopg://postgres:test@localhost:5432/testdb
         run: python -m pytest tests/ -v
 
-  # The Gmail add-on (addon/): type check, unit tests, and a build to prove the bundle still forms.
-  addon:
+  # The Gmail add-on (gmail-ui/): type check, unit tests, and a build to prove the bundle still forms.
+  gmail-ui:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: addon
+        working-directory: gmail-ui
     steps:
       - uses: actions/checkout@v4
 
@@ -63,7 +63,7 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: addon/package-lock.json
+          cache-dependency-path: gmail-ui/package-lock.json
 
       - name: Install dependencies
         run: npm ci

@@ -319,7 +319,7 @@ backend/
   requirements-lambda.txt       # pipeline-only, for the Lambda package
   requirements-dev.txt
   tests/                        # 488 tests, run against real Postgres
-addon/                          # Gmail add-on (Apps Script, TypeScript): a read-only home card
+gmail-ui/                       # Gmail add-on (Apps Script, TypeScript): a home card with review buttons
 docs/
   design-decisions.md           # 23 decisions: what else was considered, and the evidence
 SCALING.md                      # how I'd extend it to multiple users (a design exercise)
@@ -349,5 +349,4 @@ Known limitations:
 
 Not built: Google Tasks integration for dateless items and a queue-based worker (deferred until
 the simple version has more real use). A Gmail add-on (a home card with review buttons, over an authenticated
-API) is written and tested in [`addon/`](addon/README.md), including an end-to-end run against a real
-API on sample data, but not yet installed in a real Gmail.
+API) is written, tested and installed in real Gmail — see [`gmail-ui/`](gmail-ui/README.md).

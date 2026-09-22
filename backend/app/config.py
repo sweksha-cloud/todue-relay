@@ -173,6 +173,6 @@ LLM_USAGE_WARNING_THRESHOLD_PCT = float(os.getenv("LLM_USAGE_WARNING_THRESHOLD_P
 # identity token with each request (Apps Script: ScriptApp.getIdentityToken()). The API accepts a
 # request only if the token is genuine, was issued for THIS client id, and belongs to this one
 # email address. Both must be set; with either empty the API refuses everything (fail closed).
-# The client id is the "aud" claim of a token the add-on obtains: see addon/README.md.
+# The client id is the "aud" claim of a token the add-on obtains: see gmail-ui/README.md.
 ADDON_OAUTH_CLIENT_ID = os.getenv("ADDON_OAUTH_CLIENT_ID", "").strip()
 ADDON_ALLOWED_EMAIL = os.getenv("ADDON_ALLOWED_EMAIL", "").strip().lower()

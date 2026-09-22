@@ -71,7 +71,7 @@ script and is not part of the repository; the unit and bundle tests are.
    PREVIEW_DATABASE_URL=<the fake-data database> \
    ADDON_OAUTH_CLIENT_ID=<the aud from step 4> \
    ADDON_ALLOWED_EMAIL=<your email> \
-   addon/scripts/dev.sh
+   gmail-ui/scripts/dev.sh
    ```
    It refuses a database whose name does not contain "preview", starts the add-on API (its own app: the
    dashboard is not served) and a `cloudflared` tunnel (`brew install cloudflared`), and prints

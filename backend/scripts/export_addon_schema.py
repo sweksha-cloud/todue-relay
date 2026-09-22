@@ -1,6 +1,6 @@
-"""Writes addon/contract/api.schema.json: the shapes the add-on API returns.
+"""Writes gmail-ui/contract/api.schema.json: the shapes the add-on API returns.
 
-The add-on (addon/) is written in TypeScript against these shapes. The snapshot is committed, and a test
+The add-on (gmail-ui/) is written in TypeScript against these shapes. The snapshot is committed, and a test
 (tests/test_addon_contract.py) fails whenever the API's models no longer match it, so the API cannot
 change shape without this file, and therefore the add-on's own tests, being brought along.
 
@@ -14,7 +14,7 @@ from pathlib import Path
 
 from app.addon_api import ActionResult, Summary
 
-SCHEMA_PATH = Path(__file__).resolve().parents[2] / "addon" / "contract" / "api.schema.json"
+SCHEMA_PATH = Path(__file__).resolve().parents[2] / "gmail-ui" / "contract" / "api.schema.json"
 
 
 def build_schema() -> dict:
