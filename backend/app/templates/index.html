@@ -78,10 +78,19 @@
 <div class="card">
   <h2 style="font-size:1.05rem; margin-top:0;">Action items</h2>
   <p class="verdict" style="margin-top:-8px;">No fixed date — needs a reply or a look, not a calendar event.</p>
-  {% if not action_items_recent and not action_items_older %}
-    <p class="verdict">Nothing needs a reply right now.</p>
+  <div style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:10px;">
+    {% for b in action_range_buttons %}
+      {% if b.active %}
+        <span class="vote" aria-current="true" style="background:var(--border); cursor:default;">{{ b.label }}</span>
+      {% else %}
+        <a class="vote" href="{{ b.url }}" style="text-decoration:none;">{{ b.label }}</a>
+      {% endif %}
+    {% endfor %}
+  </div>
+  {% if not action_items_by_day %}
+    <p class="verdict">Nothing here for this range.</p>
   {% endif %}
-  {% for day, items in action_items_recent %}
+  {% for day, items in action_items_by_day %}
     <h3 style="font-size:0.85rem; color:var(--muted); margin-bottom:6px;">{{ day.strftime("%A, %b %d") }}</h3>
     <ul style="list-style:none; padding-left:0; margin-top:0;">
       {% for item in items %}
@@ -89,21 +98,6 @@
       {% endfor %}
     </ul>
   {% endfor %}
-  {% if action_items_older %}
-    <details class="section" style="margin-top:8px; border-top:1px solid var(--border); padding-top:8px;">
-      <summary><strong>Older than {{ action_items_recent_days }} days</strong> <span class="badge badge-skipped">{{ action_items_older_count }}</span></summary>
-      <div class="section-body" style="padding:8px 0 0;">
-        {% for day, items in action_items_older %}
-          <h3 style="font-size:0.85rem; color:var(--muted); margin-bottom:6px;">{{ day.strftime("%A, %b %d") }}</h3>
-          <ul style="list-style:none; padding-left:0; margin-top:0;">
-            {% for item in items %}
-              {% include "_action_item.html" %}
-            {% endfor %}
-          </ul>
-        {% endfor %}
-      </div>
-    </details>
-  {% endif %}
   {% if total_action_pages > 1 %}
     <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px; font-size:0.85rem;">
       {% if action_newer_url %}<a href="{{ action_newer_url }}">&larr; Newer</a>{% else %}<span></span>{% endif %}

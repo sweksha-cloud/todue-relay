@@ -116,12 +116,19 @@ def dashboard(
         else:
             sections.append(built)
 
-    total_action_items = repository.count_action_items(db)
+    action_range = request.query_params.get("action_range", ACTION_RANGE_DEFAULT)
+    if action_range not in ACTION_RANGE_VALUES:
+        action_range = ACTION_RANGE_DEFAULT
+    range_since, range_until = _action_range_bounds(action_range)
+
+    total_action_items = repository.count_action_items(db, since=range_since, until=range_until)
     total_action_pages = max(1, -(-total_action_items // ACTION_ITEMS_PAGE_SIZE))
     action_page = min(action_page, total_action_pages)
     action_offset = (action_page - 1) * ACTION_ITEMS_PAGE_SIZE
 
-    action_items = repository.list_action_items(db, limit=ACTION_ITEMS_PAGE_SIZE, offset=action_offset)
+    action_items = repository.list_action_items(
+        db, limit=ACTION_ITEMS_PAGE_SIZE, offset=action_offset, since=range_since, until=range_until
+    )
     latest_run = repository.get_latest_run(db)
     parked_count = repository.count_parked_failures(db)
     parked = repository.list_parked_failures(db, limit=5)
@@ -130,10 +137,16 @@ def dashboard(
     caught_this_week = repository.count_deadlines_caught_since(db, since)
 
     action_items_by_day = _group_by_day(action_items)
-    today_local = to_local(datetime.now(timezone.utc)).date()
-    action_items_recent, action_items_older, action_items_older_count = _split_by_age(
-        action_items_by_day, today_local
-    )
+    action_range_buttons = [
+        {
+            "value": value,
+            "label": label,
+            "active": value == action_range,
+            # Changing the range changes what page 1 even means, so it resets paging.
+            "url": _url_with(request, action_range=value, action_page=1),
+        }
+        for value, label in ACTION_RANGES
+    ]
     llm_usage = metrics.daily_llm_usage(db)
 
     return templates.TemplateResponse(
@@ -142,10 +155,8 @@ def dashboard(
         {
             "sections": sections,
             "skipped_section": skipped_section,
-            "action_items_recent": action_items_recent,
-            "action_items_older": action_items_older,
-            "action_items_older_count": action_items_older_count,
-            "action_items_recent_days": ACTION_ITEMS_RECENT_DAYS,
+            "action_items_by_day": action_items_by_day,
+            "action_range_buttons": action_range_buttons,
             "latest_run": latest_run,
             "parked_count": parked_count,
             "parked": parked,
@@ -222,18 +233,32 @@ def _group_by_day(rows: list) -> list[tuple]:
     return [(day, groups[day]) for day in order]
 
 
-ACTION_ITEMS_RECENT_DAYS = 4
+# (query value, button label). Order is the order the buttons render in. The user picks one
+# explicitly instead of the page guessing a cutoff — replaces an earlier fixed "last 4 days,
+# older folds into one section" design with direct control: pick a window, or "older than 4
+# days" to see exactly what used to be tucked away, or "All time" to see everything at once.
+ACTION_RANGES: list[tuple[str, str]] = [
+    ("24h", "Last 24 hours"),
+    ("4d", "Last 4 days"),
+    ("7d", "Last 7 days"),
+    ("30d", "Last 30 days"),
+    ("older_4d", "Older than 4 days"),
+    ("forever", "All time"),
+]
+ACTION_RANGE_VALUES = {value for value, _ in ACTION_RANGES}
+ACTION_RANGE_DEFAULT = "forever"  # shows everything — the same total set the old design always showed
 
 
-def _split_by_age(by_day: list[tuple], today) -> tuple[list[tuple], list[tuple], int]:
-    """Splits _group_by_day's output at the day cutoff: (recent day-groups, older day-groups,
-    total items in the older ones). "Recent" keeps today's own day-by-day headers front and
-    center; a long tail of old, still-unresolved action items folds into one collapsed group
-    instead of pushing the recent ones down the page."""
-    cutoff = today - timedelta(days=ACTION_ITEMS_RECENT_DAYS)
-    recent = [(day, rows) for day, rows in by_day if day >= cutoff]
-    older = [(day, rows) for day, rows in by_day if day < cutoff]
-    return recent, older, sum(len(rows) for _, rows in older)
+def _action_range_bounds(value: str) -> tuple[datetime | None, datetime | None]:
+    """(since, until) for one ACTION_RANGES value, as bounds on updated_at. None means no bound
+    on that side. "older_4d" is the one inverse case: no lower bound, only an upper one."""
+    now = datetime.now(timezone.utc)
+    days_by_value = {"24h": 1, "4d": 4, "7d": 7, "30d": 30}
+    if value in days_by_value:
+        return now - timedelta(days=days_by_value[value]), None
+    if value == "older_4d":
+        return None, now - timedelta(days=4)
+    return None, None  # "forever"
 
 
 @app.post("/emails/{email_id}/correct", response_class=HTMLResponse)

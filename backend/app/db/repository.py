@@ -643,23 +643,35 @@ def get_correction_rate(session: Session) -> float | None:
     return correct / total
 
 
-def _action_items_filter():
+def _action_items_filter(*, since: datetime | None = None, until: datetime | None = None):
     # duplicate_of_email_id is set on a follow-up that got folded into an
     # earlier action item (find_duplicate_action_item/fold_action_item) —
     # excluded here so the fold doesn't still show up as a second entry.
     # status == COMPLETED excludes one denied with mark_skipped (see review_actions.decline,
     # reused here as the action-items panel's "Deny" button) — otherwise a denied item never
     # actually left the list, since nothing else about it changes.
-    return (
+    #
+    # since/until bound updated_at (the same field the list is ordered and grouped by — a fold
+    # bumps it, so a still-live item stays where the user would look for it), for the dashboard's
+    # age filter ("last 24 hours", "older than 4 days", ...). Both default to no bound at all, so
+    # every other caller (the add-on's summary) is unaffected.
+    conditions = (
         ProcessedEmail.extraction_action_type.in_([ActionType.NEEDS_REPLY, ActionType.UNCLEAR])
         & (ProcessedEmail.status == ProcessingStatus.COMPLETED)
         & ProcessedEmail.duplicate_of_email_id.is_(None)
         & ProcessedEmail.calendar_event_id.is_(None)  # once scheduled it is no longer "no fixed date"
         & not_removed()
     )
+    if since is not None:
+        conditions = conditions & (ProcessedEmail.updated_at >= since)
+    if until is not None:
+        conditions = conditions & (ProcessedEmail.updated_at < until)
+    return conditions
 
 
-def list_action_items(session: Session, limit: int = 25, offset: int = 0) -> list[ProcessedEmail]:
+def list_action_items(
+    session: Session, limit: int = 25, offset: int = 0, *, since: datetime | None = None, until: datetime | None = None
+) -> list[ProcessedEmail]:
     """One page of needs_reply / unclear extractions — no fixed date, so no
     calendar event, but still worth surfacing. Most recently *relevant*
     first (updated_at, which a fold bumps — see fold_action_item — so a
@@ -670,7 +682,7 @@ def list_action_items(session: Session, limit: int = 25, offset: int = 0) -> lis
     """
     stmt = (
         select(ProcessedEmail)
-        .where(_action_items_filter())
+        .where(_action_items_filter(since=since, until=until))
         .order_by(ProcessedEmail.updated_at.desc())
         .limit(limit)
         .offset(offset)
@@ -678,8 +690,8 @@ def list_action_items(session: Session, limit: int = 25, offset: int = 0) -> lis
     return list(session.execute(stmt).scalars().all())
 
 
-def count_action_items(session: Session) -> int:
-    stmt = select(func.count()).select_from(ProcessedEmail).where(_action_items_filter())
+def count_action_items(session: Session, *, since: datetime | None = None, until: datetime | None = None) -> int:
+    stmt = select(func.count()).select_from(ProcessedEmail).where(_action_items_filter(since=since, until=until))
     return session.execute(stmt).scalar_one()
 
 

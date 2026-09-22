@@ -72,8 +72,9 @@
       .badge-rescheduled { background: #4a3400; color: #f5c25c; }
       .badge-duplicate { background: #303034; color: var(--muted); }
     }
-    button.vote { border: 1px solid var(--border); background: var(--card-bg); color: var(--text); border-radius: 6px; padding: 3px 8px; font-size: 0.8rem; cursor: pointer; margin-right: 4px; }
-    button.vote:hover { background: var(--bg); }
+    .vote { display: inline-block; border: 1px solid var(--border); background: var(--card-bg); color: var(--text); border-radius: 6px; padding: 3px 8px; font-size: 0.8rem; cursor: pointer; margin-right: 4px; text-decoration: none; }
+    .vote:hover { background: var(--bg); }
+    a.vote:hover { color: var(--text); }
     .verdict { font-size: 0.8rem; color: var(--muted); }
     details.section { padding: 0; }
     details.section > summary { cursor: pointer; padding: 14px 20px; list-style: none; display: flex; align-items: center; gap: 10px; font-size: 1.02rem; }

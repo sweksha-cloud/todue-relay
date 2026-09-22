@@ -854,9 +854,9 @@ class TestActionItemDeny:
         assert row is not None and row.status == ProcessingStatus.SKIPPED
 
 
-class TestActionItemsAgeSplit:
-    """Action items older than the recent window fold into one collapsed section instead of
-    pushing the recent ones down the page."""
+class TestActionItemsRangeButtons:
+    """The user picks the time window for Action Items explicitly (24h / 4d / 7d / 30d / older
+    than 4 days / all time), each a button; the app no longer guesses a fixed cutoff."""
 
     @pytest.fixture(autouse=True)
     def _pin_timezone(self, monkeypatch):
@@ -869,51 +869,80 @@ class TestActionItemsAgeSplit:
         row.updated_at = datetime.now(timezone.utc) - timedelta(days=days)
         db_session.commit()
 
-    def test_a_recent_item_shows_by_day_with_no_older_section_at_all(self, client, db_session):
+    def test_all_six_buttons_are_offered(self, client):
+        html = client.get("/").text
+
+        for label in ("Last 24 hours", "Last 4 days", "Last 7 days", "Last 30 days", "Older than 4 days", "All time"):
+            assert label in html
+
+    def test_all_time_is_the_default_and_shows_everything(self, client, db_session):
         _action_item(db_session, "a1", subject="Recent one")
+        _action_item(db_session, "a2", subject="Ancient one")
+        self._age(db_session, "a2", days=400)
 
         html = client.get("/").text
 
-        assert "Recent one" in html
-        assert "Older than" not in html
+        assert "Recent one" in html and "Ancient one" in html
+        assert '>All time</span>' in html  # rendered as the active (non-link) button
 
-    def test_an_old_item_is_folded_into_the_older_section_with_its_count(self, client, db_session):
-        _action_item(db_session, "a1", subject="Old one")
-        self._age(db_session, "a1", days=10)
+    def test_last_24_hours_hides_anything_older(self, client, db_session):
+        _action_item(db_session, "a1", subject="Today")
+        _action_item(db_session, "a2", subject="Yesterday-ish")
+        self._age(db_session, "a2", days=2)
 
-        html = client.get("/").text
+        html = client.get("/?action_range=24h").text
 
-        assert "Older than 4 days" in html
-        assert re.search(r"Older than 4 days</strong>\s*<span[^>]*>1</span>", html)
-        assert "Old one" in html  # still on the page, inside the collapsed section
+        assert "Today" in html and "Yesterday-ish" not in html
 
-    def test_the_older_count_is_a_true_total_not_a_page_size(self, client, db_session):
-        for i in range(6):
-            _action_item(db_session, f"a{i}", subject=f"Old {i}")
-            self._age(db_session, f"a{i}", days=10)
-
-        html = client.get("/").text
-
-        assert re.search(r"Older than 4 days</strong>\s*<span[^>]*>6</span>", html)
-
-    def test_an_item_exactly_at_the_cutoff_still_counts_as_recent(self, client, db_session):
-        _action_item(db_session, "a1", subject="Right at the edge")
-        self._age(db_session, "a1", days=4)
-
-        html = client.get("/").text
-
-        assert "Older than 4 days" not in html
-        assert "Right at the edge" in html
-
-    def test_recent_and_older_items_coexist_without_double_counting(self, client, db_session):
+    def test_older_than_4_days_hides_anything_recent(self, client, db_session):
         _action_item(db_session, "a1", subject="Recent")
         _action_item(db_session, "a2", subject="Old")
         self._age(db_session, "a2", days=10)
 
-        html = client.get("/").text
+        html = client.get("/?action_range=older_4d").text
 
-        assert "Recent" in html and "Old" in html
-        assert re.search(r"Older than 4 days</strong>\s*<span[^>]*>1</span>", html)
+        assert "Old" in html and "Recent" not in html
+
+    def test_an_item_comfortably_inside_four_days_is_included_in_last_4_days(self, client, db_session):
+        _action_item(db_session, "a1", subject="Inside the window")
+        row = db_session.get(ProcessedEmail, "a1")
+        row.updated_at = datetime.now(timezone.utc) - timedelta(days=3, hours=23)  # just under 4 days
+        db_session.commit()
+
+        html = client.get("/?action_range=4d").text
+
+        assert "Inside the window" in html
+
+    def test_an_unknown_range_value_falls_back_to_all_time_not_an_error(self, client, db_session):
+        _action_item(db_session, "a1", subject="Something")
+
+        response = client.get("/?action_range=nonsense")
+
+        assert response.status_code == 200
+        assert "Something" in response.text
+
+    def test_nothing_in_range_says_so_plainly(self, client, db_session):
+        _action_item(db_session, "a1", subject="Old")
+        self._age(db_session, "a1", days=10)
+
+        html = client.get("/?action_range=24h").text
+
+        assert "Nothing here for this range." in html
+
+    def test_the_active_button_is_not_a_link_the_others_are(self, client):
+        html = client.get("/?action_range=7d").text
+
+        assert '>Last 7 days</span>' in html  # active: not clickable
+        assert 'href="/?action_range=4d' in html  # inactive: still a link
+
+    def test_every_range_buttons_link_resets_to_page_one_however_which_page_you_are_on(self, client, db_session):
+        for i in range(30):
+            _action_item(db_session, f"a{i:02d}", subject=f"Item {i:02d}")
+
+        page_two = client.get("/?action_page=2").text
+
+        hrefs = re.findall(r'href="([^"]*action_range=[^"]*)"', page_two)
+        assert hrefs and all("action_page=1" in h for h in hrefs)
 
 
 class TestWhatAndWhenColumns:

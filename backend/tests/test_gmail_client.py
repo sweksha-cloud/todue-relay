@@ -104,6 +104,22 @@ class TestToEmailMessage:
         email = _to_email_message(msg)
         assert email.already_on_calendar is True
 
+    def test_flags_a_notification_whose_sender_is_in_the_from_header_instead(self):
+        """Real shape (2026-09-14, 'New event: SpartUp Founder Fiesta'): no Sender header at
+        all — the calendar-notification address is in From instead: '"SpartUp (Google Calendar)"
+        <calendar-notification@google.com>'. Checking only Sender missed this one."""
+        msg = {
+            "id": "e1", "threadId": "t1", "snippet": "s",
+            "payload": {
+                "headers": [
+                    {"name": "Subject", "value": "New event: SpartUp Founder Fiesta"},
+                    {"name": "From", "value": '"SpartUp (Google Calendar)" <calendar-notification@google.com>'},
+                ],
+                "mimeType": "text/plain", "body": {"data": "aGk="},
+            },
+        }
+        assert _to_email_message(msg).already_on_calendar is True
+
     def test_the_sender_match_is_case_insensitive(self):
         msg = {
             "id": "e1", "threadId": "t1", "snippet": "s",

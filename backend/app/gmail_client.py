@@ -96,8 +96,15 @@ def _header(headers: list[dict], name: str) -> str:
 def _is_from_google_calendar(headers: list[dict]) -> bool:
     """See _CALENDAR_NOTIFICATION_SENDER above: true for any automated email Google Calendar
     itself sent about an event, whatever the subject wording and whether or not it has an .ics
-    attachment."""
-    return _CALENDAR_NOTIFICATION_SENDER in _header(headers, "Sender").lower()
+    attachment.
+
+    Checks both Sender and From: a real inbox example ("SpartUp Founder Fiesta", a "New event:"
+    notification) put the address in From — '"SpartUp (Google Calendar)"
+    <calendar-notification@google.com>' — with no Sender header at all, instead of the Sender
+    header the other five real examples used. Checking only Sender missed it.
+    """
+    haystack = f"{_header(headers, 'Sender')} {_header(headers, 'From')}".lower()
+    return _CALENDAR_NOTIFICATION_SENDER in haystack
 
 
 def _to_email_message(msg: dict) -> EmailMessage:
