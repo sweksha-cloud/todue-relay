@@ -68,8 +68,7 @@ flowchart LR
 | Least privilege | Gmail is `gmail.modify` (needed for the dashboard's "move to trash" button; the scheduled pipeline itself only ever reads); Calendar access is events-only; workflows run with `contents: read` | `app/config.py`, `.github/workflows/` |
 
 The reasoning behind these, with the alternatives considered and the evidence, is in
-[docs/design-decisions.md](docs/design-decisions.md). For a brief tour of every part, the full tech
-stack and the APIs used, see [docs/overview.md](docs/overview.md).
+[docs/design-decisions.md](docs/design-decisions.md).
 
 ## Setup
 
@@ -322,7 +321,6 @@ backend/
   tests/                        # 488 tests, run against real Postgres
 gmail-ui/                       # Gmail add-on (Apps Script, TypeScript): a home card with review buttons
 docs/
-  overview.md                   # a brief tour of every part, the full tech stack and the APIs used
   design-decisions.md           # 28 decisions: what else was considered, and the evidence
 SCALING.md                      # how I'd extend it to multiple users (a design exercise)
 ```
