@@ -105,8 +105,10 @@ occurrence.
 ### 8. A cheap pre-filter before any LLM call
 A scoring pass over three independent signals (deadline keywords, action verbs, date-like
 patterns) requires a minimum number of them before an email goes to the LLM. The default
-`moderate` needs 2 of 3. **Evidence:** on a real 79-email inbox it sent about 39% to the LLM.
-It is re-tunable against a real inbox with `backend/scripts/tune_filter.py`.
+`moderate` needs 2 of 3. **Evidence:** on a real 50-email sample (`newer_than:2d`, the pipeline's own
+fetch window, checked 2026-09-23) it sent about 8% to the LLM. This moves with the inbox and the
+query window — it is re-tunable, and re-measurable, against a real inbox with
+`backend/scripts/tune_filter.py`.
 
 ### 9. Confidence routing: an unsure model does not write to the calendar
 Only a high-confidence deadline with a plausible date creates an event automatically. Everything

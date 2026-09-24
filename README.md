@@ -59,7 +59,7 @@ flowchart LR
 |---|---|---|
 | A crash or a re-run must never double-create a Calendar event | Atomic claim per email using Postgres `INSERT ... ON CONFLICT DO UPDATE ... WHERE ... RETURNING`; a stale claim from a crashed run is reclaimed after `STALE_CLAIM_MINUTES`; a recovery sweep re-fetches stuck emails directly by id | `app/db/repository.py`, `app/pipeline.py` |
 | Two runs at once (a manual run during a scheduled one, or Actions and Lambda together) would double-spend the daily Gemini budget | A single-flight guard: a Postgres advisory *transaction* lock serializes the check-and-insert of a `RUNNING` row, so a real run exits immediately if another started within `RUN_LOCK_TTL_MINUTES` and hasn't finished. The expiry doubles as a lease for crashed runs, and the lock is transaction-scoped, so it works through a pooled connection. Covered by a multi-connection race test | `app/db/repository.py`, `app/pipeline.py`, `tests/test_run_guard.py` |
-| The LLM is slow, rate-limited and sometimes wrong | A cheap pre-filter runs first (on a real 79-email inbox, the default level passed ~39% to the LLM). Responses are validated against a schema. One bad email is isolated and recorded as failed without aborting the batch | `app/filters.py`, `app/schemas.py` |
+| The LLM is slow, rate-limited and sometimes wrong | A cheap pre-filter runs first (on a real inbox sample matching the pipeline's own fetch window, the default level passed ~8% to the LLM). Responses are validated against a schema. One bad email is isolated and recorded as failed without aborting the batch | `app/filters.py`, `app/schemas.py` |
 | An unsure model must not silently write to your calendar | Confidence routing: only high confidence with a plausible date auto-creates. An implausible date is never dropped; it is flagged and queued | `app/pipeline.py` |
 | The same deadline arrives twice, or moves | Name-similarity matching against tracked deadlines: always the same day, and across days only when the email has reschedule wording. A match with a changed date updates the existing event | `app/db/repository.py` |
 | Timezones silently shift real events | Explicit `CALENDAR_TIMEZONE` (never the runner's clock), offsets attached to event times, and regression tests for every bug found in real data (`EST/EDT`, spelled-out regions, `GMT+2` sign inversion) | `app/date_utils.py`, `tests/test_date_utils.py` |
@@ -159,8 +159,11 @@ day.
 python -m scripts.tune_filter --max-results 200
 ```
 
-Against a real inbox (79 unread emails), the default `moderate` level passed
-~39% through to the LLM, `strict` ~5% and `loose` ~66%.
+Against a real inbox (50 unread emails, `newer_than:2d` — the same window the
+scheduled pipeline itself fetches, checked 2026-09-23), the default `moderate`
+level passed ~8% through to the LLM, `strict` ~2% and `loose` ~98%. This
+number moves with the inbox and the query window; re-run the command above
+against a current sample before quoting it anywhere.
 
 ## Gemini quota
 
