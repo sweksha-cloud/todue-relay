@@ -24,3 +24,6 @@ aws/build/
 gmail-ui/node_modules/
 gmail-ui/dist/
 gmail-ui/.clasp.json
+
+# Private metrics report (real inbox-derived numbers) — never commit
+.claude/metrics/
