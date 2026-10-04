@@ -1,4 +1,7 @@
+from types import SimpleNamespace
+
 import pytest
+from googleapiclient.errors import HttpError
 from sqlalchemy import func, select
 
 from app import pipeline
@@ -537,3 +540,97 @@ class TestSingleFlight:
 
         monkeypatch.setattr(pipeline, "get_gmail_service", lambda: object())
         assert pipeline.run_pipeline()["skipped_run"] is False
+
+
+class _FakeCalendarService:
+    """Google Calendar as far as event creation goes: events are kept by id, and inserting an id that
+    already exists is refused with a 409, the way the real API does."""
+
+    def __init__(self):
+        self.events_by_id = {}
+
+    def events(self):
+        return self
+
+    def insert(self, calendarId, body):
+        def execute():
+            event_id = body.get("id") or f"random{len(self.events_by_id)}"  # Google picks one if none is given
+            if event_id in self.events_by_id:
+                raise HttpError(resp=SimpleNamespace(status=409, reason="Conflict"), content=b"{}")
+            self.events_by_id[event_id] = body
+            return {"id": event_id}
+
+        return SimpleNamespace(execute=execute)
+
+
+class _HardCrash(BaseException):
+    """Stands in for the process dying (a Lambda timeout, out of memory): not an Exception, so the
+    pipeline's per-email error handler never runs and the claim is left PROCESSING."""
+
+
+class TestCalendarCreateIsSafeToRetry:
+    """Creating the Calendar event and recording its id are two separate writes. A run that died between
+    them used to leave the retry free to create a second event; a deterministic event id now makes the
+    retry find the first one instead."""
+
+    @pytest.fixture
+    def setup(self, db_session, monkeypatch):
+        from app import calendar_client
+
+        cal = _FakeCalendarService()
+        monkeypatch.setattr(calendar_client, "get_calendar_service", lambda: cal)
+        monkeypatch.setattr(pipeline, "extract_deadline", lambda email: ExtractionResult(
+            email_id=email.id, event_name=_EVENT_NAMES[email.id], deadline_date_raw="next Friday",
+            deadline_date=datetime.now(timezone.utc) + timedelta(days=7),
+            source_context="ctx", confidence="high", action_type="deadline",
+        ))
+        return cal
+
+    def _crash_once_after_creating(self, monkeypatch, crash):
+        real_mark_completed = repository.mark_completed
+        state = {"crashed": False}
+
+        def mark_completed(*args, **kwargs):
+            if not state["crashed"]:
+                state["crashed"] = True
+                raise crash
+            return real_mark_completed(*args, **kwargs)
+
+        monkeypatch.setattr(repository, "mark_completed", mark_completed)
+
+    def test_a_hard_crash_then_a_stale_claim_retry_makes_one_event(self, setup, db_session, monkeypatch):
+        cal = setup
+        self._crash_once_after_creating(monkeypatch, _HardCrash())
+
+        with pytest.raises(_HardCrash):
+            _claim_and_process(db_session, _email())
+        assert len(cal.events_by_id) == 1  # the event was created before the crash
+        row = db_session.get(ProcessedEmail, "e1")
+        assert row.status == ProcessingStatus.PROCESSING and row.calendar_event_id is None
+
+        row.claimed_at = datetime.now(timezone.utc) - timedelta(hours=1)  # the claim has gone stale
+        db_session.commit()
+        assert _claim_and_process(db_session, _email()) == "processed"
+
+        assert len(cal.events_by_id) == 1  # still one event, not two
+        db_session.refresh(row)
+        assert row.status == ProcessingStatus.COMPLETED
+        assert row.calendar_event_id in cal.events_by_id
+
+    def test_a_failure_after_creating_then_a_retry_makes_one_event(self, setup, db_session, monkeypatch):
+        cal = setup
+        self._crash_once_after_creating(monkeypatch, RuntimeError("database connection dropped"))
+
+        assert _claim_and_process(db_session, _email()) == "failed"
+        assert _claim_and_process(db_session, _email()) == "processed"  # FAILED with retries left
+
+        assert len(cal.events_by_id) == 1
+        assert db_session.get(ProcessedEmail, "e1").calendar_event_id in cal.events_by_id
+
+    def test_different_emails_still_get_separate_events(self, setup, db_session):
+        cal = setup
+
+        _claim_and_process(db_session, _email(id="e1"))
+        _claim_and_process(db_session, _email(id="e2", thread_id="t2"))
+
+        assert len(cal.events_by_id) == 2

@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -5,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from googleapiclient.errors import HttpError
 
-from app.calendar_client import build_event_body, create_event, delete_event, update_event
+from app.calendar_client import build_event_body, create_event, delete_event, event_id_for_email, update_event
 
 
 def _http_error(status: int) -> HttpError:
@@ -77,6 +78,47 @@ class TestEventOperations:
         body = service.events().insert.call_args.kwargs["body"]
         assert body["recurrence"] == ["RRULE:FREQ=WEEKLY;BYDAY=MO"]
 
+    def test_create_event_with_an_event_id_sends_it(self):
+        service = MagicMock()
+        service.events().insert().execute.return_value = {"id": "todueabc12"}
+
+        event_id = create_event(service, "Test", "desc", datetime(2026, 9, 11), has_time=False, event_id="todueabc12")
+
+        assert event_id == "todueabc12"
+        assert service.events().insert.call_args.kwargs["body"]["id"] == "todueabc12"
+
+    def test_create_event_without_an_event_id_lets_google_choose(self):
+        service = MagicMock()
+        service.events().insert().execute.return_value = {"id": "google-chosen"}
+
+        create_event(service, "Test", "desc", datetime(2026, 9, 11), has_time=False)
+
+        assert "id" not in service.events().insert.call_args.kwargs["body"]
+
+    def test_already_existing_event_id_is_treated_as_created(self):
+        """A retry after a run that created the event but died before recording it: Google answers 409
+        for the reused id, and that must count as done, not raise and not make a second event."""
+        service = MagicMock()
+        service.events().insert().execute.side_effect = _http_error(409)
+
+        event_id = create_event(service, "Test", "desc", datetime(2026, 9, 11), has_time=False, event_id="todueabc12")
+
+        assert event_id == "todueabc12"
+
+    def test_a_409_without_an_event_id_still_raises(self):
+        service = MagicMock()
+        service.events().insert().execute.side_effect = _http_error(409)
+
+        with pytest.raises(HttpError):
+            create_event(service, "Test", "desc", datetime(2026, 9, 11), has_time=False)
+
+    def test_other_errors_with_an_event_id_still_raise(self):
+        service = MagicMock()
+        service.events().insert().execute.side_effect = _http_error(500)
+
+        with pytest.raises(HttpError):
+            create_event(service, "Test", "desc", datetime(2026, 9, 11), has_time=False, event_id="todueabc12")
+
     def test_update_event_calls_patch_with_event_id(self):
         service = MagicMock()
 
@@ -112,3 +154,16 @@ class TestEventOperations:
 
         with pytest.raises(HttpError):
             delete_event(service, "some-id")
+
+
+class TestEventIdForEmail:
+    def test_same_email_always_gets_the_same_id(self):
+        assert event_id_for_email("1a0f83aadcdebb8d") == event_id_for_email("1a0f83aadcdebb8d")
+
+    def test_different_emails_get_different_ids(self):
+        assert event_id_for_email("1a0f83aadcdebb8d") != event_id_for_email("1a0e8ae507ad8211")
+
+    @pytest.mark.parametrize("email_id", ["1a0f83aadcdebb8d", "ABC-xyz_123", ""])
+    def test_id_is_valid_for_google_calendar(self, email_id):
+        """Calendar event ids allow only base32hex characters (a-v, 0-9), 5 to 1024 long."""
+        assert re.fullmatch(r"[a-v0-9]{5,1024}", event_id_for_email(email_id))

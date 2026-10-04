@@ -390,6 +390,9 @@ def _process_one(session, email) -> None:
                 date_changed_from=match.extraction_deadline_parsed,
             )
         else:
+            # A deterministic id makes this create safe to retry: a run that dies after creating
+            # the event but before mark_completed records it gets "already exists" on the retry,
+            # not a second event (calendar_client.event_id_for_email).
             event_id = calendar_client.create_event(
                 service,
                 summary=extraction.event_name,
@@ -397,6 +400,7 @@ def _process_one(session, email) -> None:
                 deadline=extraction.deadline_date,
                 has_time=has_explicit_time(extraction.deadline_date_raw),
                 recurrence_rule=extraction.recurrence_rule,
+                event_id=calendar_client.event_id_for_email(email.id),
             )
             repository.mark_completed(session, email.id, extraction, calendar_event_id=event_id)
     else:

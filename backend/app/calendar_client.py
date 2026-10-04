@@ -5,6 +5,7 @@ Shares OAuth with the Gmail client — see app/google_auth.py.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -65,6 +66,20 @@ def build_event_body(
     return body
 
 
+def event_id_for_email(email_id: str) -> str:
+    """The Calendar event id the pipeline uses when it auto-creates the event for one email.
+
+    Deterministic, so the create is safe to repeat. Creating the event and recording its id in
+    Postgres are two separate writes; a run that dies between them leaves the claim to go stale,
+    and the retry would otherwise create a second event. With the same id, the retry's insert is
+    refused as already existing instead (see create_event).
+
+    Calendar ids may contain only base32hex characters (a-v, 0-9) and must be 5 to 1024 long, so
+    the email id is hashed to hex rather than used as is.
+    """
+    return "todue" + hashlib.sha256(email_id.encode()).hexdigest()[:32]
+
+
 def create_event(
     service,
     summary: str,
@@ -73,14 +88,28 @@ def create_event(
     has_time: bool,
     calendar_id: str = "primary",
     recurrence_rule: str | None = None,
+    event_id: str | None = None,
 ) -> str:
     """Create the event and return its Calendar event id (stored in
     ProcessedEmail.calendar_event_id for the audit trail / idempotency).
     For a recurring series, this id is the master event's id — patch/delete
     against it affects the whole series, not a single instance.
+
+    With event_id, the event is created under that id, and a 409 (an event with that id already
+    exists) means an earlier attempt already created it: that id is returned as a success instead
+    of a second event being made. Google also keeps a deleted event's id reserved, so the same
+    409 covers an event the user removed in the meantime; recording the id is still correct, and
+    removing it again later is already idempotent (delete_event).
     """
     body = build_event_body(summary, description, deadline, has_time, recurrence_rule)
-    created = service.events().insert(calendarId=calendar_id, body=body).execute()
+    if event_id is not None:
+        body["id"] = event_id
+    try:
+        created = service.events().insert(calendarId=calendar_id, body=body).execute()
+    except HttpError as e:
+        if event_id is not None and e.resp.status == 409:
+            return event_id
+        raise
     return created["id"]
 
 
