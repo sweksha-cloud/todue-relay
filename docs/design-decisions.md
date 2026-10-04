@@ -28,8 +28,12 @@ instance.
 
 ### 2. Atomic claims, and a short stale-claim window
 Each email is claimed with a single Postgres `INSERT ... ON CONFLICT DO UPDATE ... WHERE ...
-RETURNING`, so a crash or a re-run cannot double-create an event. A claim left behind by a
-crashed run is reclaimed after `STALE_CLAIM_MINUTES`. The first value (15 minutes) was a
+RETURNING`, so a crash or a re-run cannot process the same email twice. A claim left behind by a
+crashed run is reclaimed after `STALE_CLAIM_MINUTES`. The claim alone did not cover one gap:
+creating the Calendar event and recording its id in Postgres are two writes, and a run that died
+between them let the retry create a second event. Each auto-created event is now created under an
+id derived from the email id, so the retry's insert is refused as already existing and the
+existing id is recorded (`calendar_client.event_id_for_email`). The first value (15 minutes) was a
 placeholder. A real run log showed one Gemini call takes about 1 second and per-email work is
 dominated by a 13-second pacing delay, so the window is **3 minutes**: still 6 to 10 times the
 realistic worst case for one email, and a stuck email is retried 5 times sooner.
