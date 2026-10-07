@@ -12,6 +12,14 @@ Google Gemini, the Gmail and Calendar APIs, AWS Lambda + EventBridge Scheduler,
 GitHub Actions (CI, and CD through GitHub OIDC). The scheduled job runs on AWS; see
 [Deployment](#deployment).
 
+## Demo
+
+**[Watch the demo video](VIDEO_LINK_HERE)** (about 1 minute)
+
+Why a demo? ToDue reads Gmail, which Google classifies as a restricted scope. Opening it to the public requires a paid third-party security audit, renewed annually. This video shows the real pipeline on sample emails; the production version runs hourly on my own inbox.
+
+How the video is made: [demo-video/](demo-video/).
+
 ## How it works
 
 ```mermaid
