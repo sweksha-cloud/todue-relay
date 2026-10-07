@@ -154,7 +154,7 @@ def run(keep: bool = False, redo: tuple[str, ...] = ()) -> None:
 
     # Gemini's 503 "high demand" errors come and go; the pipeline leaves such an email failed and retries it
     # on its next run, so do what the hourly schedule would, just a minute apart instead of an hour.
-    for attempt in range(1, 9):
+    for attempt in range(1, 4):  # capped: Gemini's daily quota is shared with the real hourly pipeline
         result = pipeline.run_pipeline()
         print(f"run {attempt}:", {k: result[k] for k in ("fetched", "processed", "failed", "filtered_out")})
         if not result["failed"]:
