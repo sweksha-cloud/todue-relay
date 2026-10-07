@@ -404,12 +404,12 @@ def event_calls(monkeypatch):
 
 
 class TestIncorrectAndRescheduleOnALiveEvent:
-    def test_an_unvoted_live_row_offers_correct_incorrect_reschedule_and_remove(self, client, db_session):
+    def test_an_unvoted_live_row_offers_incorrect_reschedule_and_remove(self, client, db_session):
         _completed_row(db_session)
 
         page = client.get("/").text
 
-        assert '"is_correct": "true"' in page and "Correct" in page
+        assert '"is_correct": "true"' not in page  # no "Correct" button: an event left alone is taken as right
         assert '"is_correct": "false"' in page and "Incorrect" in page
         assert "/emails/e1/reschedule" in page
         assert "/emails/e1/remove" in page
@@ -493,7 +493,7 @@ class TestIncorrectAndRescheduleOnALiveEvent:
 
 
 class TestParkedEmailBanner:
-    """An email that failed for good must be visible on the main page, not only in the history list."""
+    """An email that failed for good is called out on the Metrics page, where failed emails live (2026-10-07)."""
 
     def _fail(self, db_session, email_id, subject="Some subject", error="ServerError: 503 UNAVAILABLE", attempts=3):
         repository.try_claim_email(db_session, email_id, f"t-{email_id}", subject)
@@ -504,38 +504,38 @@ class TestParkedEmailBanner:
     def test_a_parked_email_is_called_out_with_its_subject_and_error(self, client, db_session):
         self._fail(db_session, "e1", subject="Direct Consideration #007")
 
-        html = client.get("/").text
+        html = client.get("/metrics").text
 
         assert "1 email failed and will not be retried automatically." in html
         assert "Direct Consideration #007" in html
-        assert "503 UNAVAILABLE" in html
+        assert "Gemini overloaded" in html  # the plain label; the raw error stays in the tooltip
 
     def test_it_says_what_to_do_about_a_temporary_error(self, client, db_session):
         self._fail(db_session, "e1")
 
-        assert "python -m scripts.retry_failed --apply" in client.get("/").text
+        assert "python -m scripts.retry_failed --apply" in client.get("/metrics").text
 
     def test_several_are_pluralised_and_the_extras_counted(self, client, db_session):
         for i in range(7):
             self._fail(db_session, f"e{i}", subject=f"Subject number {i}")
 
-        html = client.get("/").text
+        html = client.get("/metrics").text
 
         assert "7 emails failed and will not be retried automatically." in html
         assert "and 2 more" in html  # five are listed
 
     def test_no_banner_when_nothing_has_failed_for_good(self, client, db_session):
-        assert "will not be retried automatically" not in client.get("/").text
+        assert "will not be retried automatically" not in client.get("/metrics").text
 
     def test_an_email_that_will_still_be_retried_does_not_trigger_it(self, client, db_session):
         self._fail(db_session, "e1", attempts=1)
 
-        assert "will not be retried automatically" not in client.get("/").text
+        assert "will not be retried automatically" not in client.get("/metrics").text
 
     def test_a_subject_containing_html_is_escaped(self, client, db_session):
         self._fail(db_session, "e1", subject="<script>alert(1)</script>", error="<img src=x onerror=alert(2)>")
 
-        html = client.get("/").text
+        html = client.get("/metrics").text
 
         assert "<script>alert(1)</script>" not in html and "<img src=x onerror=alert(2)>" not in html
         assert "&lt;script&gt;" in html
@@ -543,7 +543,7 @@ class TestParkedEmailBanner:
     def test_a_long_error_is_shortened(self, client, db_session):
         self._fail(db_session, "e1", error="ServerError: " + "x" * 500)
 
-        html = client.get("/").text
+        html = client.get("/metrics").text
 
         assert "x" * 200 not in html
 
@@ -571,7 +571,7 @@ class TestCategorySections:
 
     def test_each_decision_lands_in_its_own_section_and_only_that_one(self, client, db_session):
         self._everything(db_session)
-        page = client.get("/").text
+        page = client.get("/").text + client.get("/metrics").text  # failed lives on /metrics
         expected = {
             "needs_review": "Held back item", "to_check": "Auto added item",
             "marked_incorrect": "Wrong item", "skipped": "Declined item", "failed": "Failed item",
@@ -599,8 +599,11 @@ class TestCategorySections:
 
         page = client.get("/").text
 
-        order = [page.index(f'id="section-{k}"') for k in ("needs_review", "to_check", "marked_incorrect", "failed", "skipped")]
+        order = [page.index(m) for m in ('id="section-needs_review"', 'id="action-items"', 'id="section-to_check"',
+                                         'id="section-marked_incorrect"', 'id="section-skipped"')]
         assert order == sorted(order)
+        assert 'id="section-failed"' not in page  # on /metrics instead
+        assert 'href="/metrics#section-failed"' in page  # but the dashboard says something failed
         assert re.search(r"On your calendar</strong>\s*<span[^>]*>2</span>", page)  # a true count, not a guess
 
     def test_denied_or_skipped_renders_below_even_in_progress(self, client, db_session):
@@ -640,7 +643,7 @@ class TestCategorySections:
 
     def test_sections_wanting_a_decision_start_open_and_finished_ones_start_closed(self, client, db_session):
         self._everything(db_session)
-        page = client.get("/").text
+        page = client.get("/").text + client.get("/metrics").text
 
         for key in ("needs_review", "to_check", "marked_incorrect", "failed"):
             assert re.search(rf'<details[^>]*id="section-{key}"', _section(page, key)) and " open" in _section(page, key).split(">")[0]
@@ -1032,7 +1035,7 @@ class TestTrashEmailButton:
         repository.try_claim_email(db_session, "f1", "t", "s")
         repository.mark_failed(db_session, "f1", "ValueError: bad")
 
-        html = _section(client.get("/").text, "failed")
+        html = _section(client.get("/metrics").text, "failed")
 
         assert "/emails/f1/trash" in html
 
@@ -1062,3 +1065,42 @@ class TestTrashEmailButton:
     def test_trashing_an_unknown_email_is_a_404(self, client, gmail):
         assert client.post("/emails/nope/trash").status_code == 404
         assert gmail["trashed"] == []
+
+
+class TestOpenInGmail:
+    def test_an_action_item_links_to_its_conversation_in_gmail(self, client, db_session, monkeypatch):
+        from app import view_helpers
+
+        monkeypatch.setattr(view_helpers, "GMAIL_ACCOUNT_EMAIL", "")  # whatever the local .env says
+        _action_item(db_session, "a1")
+        thread_id = db_session.get(ProcessedEmail, "a1").thread_id
+
+        html = client.get("/").text
+
+        assert f'href="https://mail.google.com/mail/u/0/#all/{thread_id}"' in html
+        assert "Open in Gmail" in html
+
+    def test_the_link_picks_the_configured_account(self, monkeypatch):
+        from app import view_helpers
+
+        monkeypatch.setattr(view_helpers, "GMAIL_ACCOUNT_EMAIL", "me@example.com")
+
+        assert view_helpers.gmail_url("18c2f") == "https://mail.google.com/mail/u/me@example.com/#all/18c2f"
+
+
+class TestFriendlyError:
+    def test_a_429_is_a_rate_limit(self):
+        from app.view_helpers import friendly_error
+
+        assert friendly_error("ClientError: 429 RESOURCE_EXHAUSTED. {'error': ...}").startswith("Rate limit hit")
+
+    def test_a_503_is_gemini_being_overloaded_not_our_limit(self):
+        from app.view_helpers import friendly_error
+
+        assert friendly_error("ServerError: 503 UNAVAILABLE. high demand").startswith("Gemini overloaded")
+
+    def test_anything_else_is_shown_as_is(self):
+        from app.view_helpers import friendly_error
+
+        assert friendly_error("ValueError: bad") == "ValueError: bad"
+        assert friendly_error(None) == "No error recorded"

@@ -22,25 +22,15 @@
       <span class="run-dot none"></span> No runs yet
     {% endif %}
   </div>
+  {% if failed_count %}
+    <a class="badge badge-failed" href="/metrics#section-failed" title="Emails that could not be processed are listed on the Metrics page">{{ failed_count }} failed &rarr; Metrics</a>
+  {% endif %}
   <div class="waiting">
     <div id="waiting-result"></div>
     <div id="waiting-spinner" class="htmx-indicator verdict">Checking Gmail…</div>
     <button class="btn" hx-post="/waiting" hx-target="#waiting-result" hx-swap="innerHTML" hx-disabled-elt="this" hx-indicator="#waiting-spinner" title="Count emails waiting to be processed. Reads Gmail only; costs no Gemini quota.">Check waiting mail</button>
   </div>
 </div>
-
-{% if parked_count %}
-<div class="card alert parked-banner">
-  <strong>{{ parked_count }} email{{ "" if parked_count == 1 else "s" }} failed and will not be retried automatically.</strong>
-  <ul>
-    {% for e in parked %}
-      <li>{{ e.email_subject }} <span class="verdict">&mdash; {{ (e.error_message or "no error recorded") | truncate(90) }}</span></li>
-    {% endfor %}
-    {% if parked_count > parked | length %}<li class="verdict">and {{ parked_count - (parked | length) }} more</li>{% endif %}
-  </ul>
-  <span class="verdict">If the error is a temporary Gemini one (503 or 429), <code>python -m scripts.retry_failed --apply</code> gives them fresh attempts.</span>
-</div>
-{% endif %}
 
 <div class="stats">
   <div class="card">
@@ -63,11 +53,12 @@
   </a>
 </div>
 
-{% for s in sections %}
+{% if review_section %}
+  {% set s = review_section %}
   {% include "_section.html" %}
-{% endfor %}
+{% endif %}
 
-<div class="card">
+<div class="card" id="action-items">
   <h2 class="card-title">Action items</h2>
   <p class="verdict" style="margin:0;">No fixed date — needs a reply or a look, not a calendar event.</p>
   <div class="segmented">
@@ -98,6 +89,10 @@
     </div>
   {% endif %}
 </div>
+
+{% for s in sections %}
+  {% include "_section.html" %}
+{% endfor %}
 
 {% if skipped_section %}
   {% set s = skipped_section %}

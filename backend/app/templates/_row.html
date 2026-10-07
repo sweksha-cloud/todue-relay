@@ -46,7 +46,7 @@
       {% if email.extraction_event_name %}<span class="subject">From &ldquo;{{ email.email_subject }}&rdquo;</span><span class="sep">&middot;</span>{% endif %}<span class="when">processed {{ (email.created_at | to_local).strftime("%b %d, %I:%M %p") }}</span>
     </div>
     {% if email.error_message and display_status(email) == "failed" %}
-      <div class="item-sub"><span class="subject">{{ email.error_message | truncate(120) }}</span></div>
+      <div class="item-sub"><span class="badge badge-failed" title="{{ email.error_message | truncate(150) }}">{{ email.error_message | friendly_error | truncate(120) }}</span></div>
     {% endif %}
   </div>
 
@@ -70,8 +70,9 @@
       {# Live Calendar event. Reschedule and Remove stay available whether or not a verdict has been recorded.
          Reschedule alone records NO verdict (the user may just want a different time); Incorrect records a
          wrong vote without touching the event, and can be followed by a Reschedule to fix the time. #}
+      {# No "Correct" button here (removed 2026-10-07 at the user's request): an event left alone is
+         taken as right. "Incorrect" stays, since that vote is what feeds the correction-rate stat. #}
       {% if email.user_correction is none %}
-        <button class="btn" hx-post="/emails/{{ email.email_id }}/correct" hx-vals='{"is_correct": "true"}' hx-swap="none" title="The event is right">{{ icon("check") }} Correct</button>
         <button class="btn" hx-post="/emails/{{ email.email_id }}/correct" hx-vals='{"is_correct": "false"}' hx-swap="none" title="Something about the event is wrong">{{ icon("x") }} Incorrect</button>
       {% elif email.user_correction %}
         <span class="verdict">Marked correct</span>
@@ -103,6 +104,7 @@
     <div class="dropdown">
       <button class="btn btn-ghost btn-icon" type="button" data-dropdown-toggle aria-label="More actions" title="More actions">{{ icon("more") }}</button>
       <div class="dropdown-panel">
+        <a class="menu-item" href="{{ gmail_url(email.thread_id) }}" target="_blank" rel="noopener">{{ icon("mail") }} Open in Gmail</a>
         {% if email.calendar_event_id and display_status(email) != "needs review" %}
           <button class="menu-item danger" hx-post="/emails/{{ email.email_id }}/remove" hx-swap="none" hx-confirm="Remove this event from your Google Calendar?">{{ icon("calendar-x") }} Remove from calendar</button>
         {% endif %}

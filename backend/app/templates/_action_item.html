@@ -9,6 +9,7 @@
     {% if item.extraction_source_context %}<div class="item-sub">{{ item.extraction_source_context }}</div>{% endif %}
   </div>
   <div class="item-actions">
+    <a class="btn" href="{{ gmail_url(item.thread_id) }}" target="_blank" rel="noopener" title="Open the email in Gmail to read or reply">{{ icon("mail") }} Open in Gmail</a>
     <div class="dropdown">
       <button class="btn" type="button" data-dropdown-toggle title="Create a Calendar event at this date and time">{{ icon("calendar") }} Schedule</button>
       <div class="dropdown-panel">

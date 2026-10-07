@@ -2,45 +2,88 @@
 {% block nav %}<a href="/">&larr; Dashboard</a>{% endblock %}
 {% block content %}
 
-<div class="card">
-  <h2 class="card-title">LLM usage today</h2>
-  <div class="summary-row">
-    <div class="stat">
-      <div class="num">{{ llm_usage.calls }} / {{ llm_usage.quota }}</div>
-      <div class="label">calls today (resets {{ (llm_usage.resets_at | to_local).strftime("%I:%M %p") }} your time)</div>
-    </div>
-    <div class="stat">
-      <div class="num">{{ "%.0f%%"|format(llm_usage.pct) if llm_usage.pct is not none else "—" }}</div>
-      <div class="label">of daily quota</div>
-    </div>
-    <div class="stat">
-      <div class="num">{{ llm_usage.calls_this_month }}</div>
-      <div class="label">calls since {{ llm_usage.month_start.strftime("%b %d") }}</div>
-    </div>
+{% set rated = run_history | selectattr("filter_pass_rate", "ne", none) | list %}
+{% set succeeded = run_history | selectattr("run.status.value", "eq", "success") | list %}
+
+<div class="stats stats-4">
+  <div class="card">
+    <div class="stat-num">{{ llm_usage.calls }}<span class="muted" style="font-size:1rem; font-weight:500;"> / {{ llm_usage.quota }}</span></div>
+    <div class="stat-label">Gemini calls today &middot; resets {{ (llm_usage.resets_at | to_local).strftime("%I:%M %p") }}</div>
+    <div class="meter {{ 'warn' if llm_usage.warning else '' }}"><div style="width:{{ ([llm_usage.pct, 100]|min)|round(1) if llm_usage.pct is not none else 0 }}%;"></div></div>
   </div>
-  <div class="meter {{ 'warn' if llm_usage.warning else '' }}"><div style="width:{{ ([llm_usage.pct, 100]|min)|round(1) if llm_usage.pct is not none else 0 }}%;"></div></div>
-  <p class="verdict" style="margin-top:10px; margin-bottom:0;">
-    Counted from each run's own records, so it's exact for calls this pipeline made — but it can't see
-    anything else using the same Google project (the AI Studio playground, another script). The daily
-    limit of {{ llm_usage.quota }} is the free-tier figure for this model, confirmed in Google AI Studio;
-    if Google's own Rate limit page shows more used than this, something else is spending it.
-    There is no monthly quota — Gemini limits are per-minute and per-day.
-  </p>
+  <div class="card">
+    <div class="stat-num">{{ llm_usage.calls_this_month }}</div>
+    <div class="stat-label">calls since {{ llm_usage.month_start.strftime("%b %d") }}</div>
+  </div>
+  <div class="card">
+    <div class="stat-num">{{ "%.0f%%"|format((rated | sum(attribute="filter_pass_rate")) / (rated | length) * 100) if rated else "—" }}</div>
+    <div class="stat-label">of mail passed the pre-filter (last {{ rated | length }} runs)</div>
+  </div>
+  <div class="card">
+    <div class="stat-num">{{ succeeded | length }}<span class="muted" style="font-size:1rem; font-weight:500;"> / {{ run_history | length }}</span></div>
+    <div class="stat-label">recent runs succeeded</div>
+  </div>
 </div>
+
+{% if run_history %}
+{% set chart_runs = run_history | reverse | list %}
+{% set peak = [chart_runs | map(attribute="sent_to_llm") | max, 1] | max %}
+<div class="card">
+  <h2 class="card-title">Gemini calls per run</h2>
+  <p class="verdict" style="margin:0 0 12px;">Last {{ chart_runs | length }} runs, oldest on the left. Hover a bar for the run's details.</p>
+  <div class="bars" role="img" aria-label="Gemini calls per run for the last {{ chart_runs | length }} runs; the most in one run was {{ peak }}">
+    <span class="bars-max verdict">{{ peak }}</span>
+    {% for r in chart_runs %}
+      <div class="bar-slot" tabindex="0">
+        <div class="bar {{ 'zero' if not r.sent_to_llm else '' }}" style="height:{{ (r.sent_to_llm / peak * 100) | round(1) if r.sent_to_llm else 0 }}%;"></div>
+        <div class="tip">
+          <strong>{{ (r.run.started_at | to_local).strftime("%b %d, %I:%M %p") }}</strong><br>
+          {{ r.sent_to_llm }} sent to Gemini &middot; {{ r.run.emails_fetched }} fetched<br>
+          {{ r.deadlines_auto_created }} added &middot; {{ r.review_queue_items }} to review &middot; {{ r.action_items_surfaced }} action items
+          {% if r.run.emails_failed %}<br>{{ r.run.emails_failed }} failed{% endif %}
+          {% if r.run.emails_deferred %}<br>{{ r.run.emails_deferred }} deferred (quota spent){% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+  <div class="bars-axis verdict">
+    <span>{{ (chart_runs[0].run.started_at | to_local).strftime("%b %d, %I:%M %p") }}</span>
+    <span>{{ (chart_runs[-1].run.started_at | to_local).strftime("%b %d, %I:%M %p") }}</span>
+  </div>
+</div>
+{% endif %}
+
+{% if parked_count %}
+<div class="card alert parked-banner">
+  <strong>{{ parked_count }} email{{ "" if parked_count == 1 else "s" }} failed and will not be retried automatically.</strong>
+  <ul>
+    {% for e in parked %}
+      <li>{{ e.email_subject }} <span class="verdict" title="{{ (e.error_message or '') | truncate(150) }}">&mdash; {{ e.error_message | friendly_error | truncate(90) }}</span></li>
+    {% endfor %}
+    {% if parked_count > parked | length %}<li class="verdict">and {{ parked_count - (parked | length) }} more</li>{% endif %}
+  </ul>
+  <span class="verdict">If it was a rate limit or Gemini being overloaded, <code>python -m scripts.retry_failed --apply</code> gives them fresh attempts.</span>
+</div>
+{% endif %}
+
+{% if failed_section %}
+  {% set s = failed_section %}
+  {% include "_section.html" %}
+{% endif %}
 
 <div class="card">
   <h2 class="card-title">Weekly correction rate</h2>
   {% if weekly_correction_rate %}
     <div class="overflow-x">
       <table>
-        <thead><tr><th>Week of</th><th>Correct</th><th>Total votes</th><th>Rate</th></tr></thead>
+        <thead><tr><th>Week of</th><th class="num">Correct</th><th class="num">Total votes</th><th class="num">Rate</th></tr></thead>
         <tbody>
           {% for w in weekly_correction_rate %}
             <tr>
               <td>{{ w.week.strftime("%b %d, %Y") }}</td>
-              <td>{{ w.correct }}</td>
-              <td>{{ w.total }}</td>
-              <td>{{ "%.0f%%"|format(w.rate * 100) if w.rate is not none else "—" }}</td>
+              <td class="num">{{ w.correct }}</td>
+              <td class="num">{{ w.total }}</td>
+              <td class="num">{{ "%.0f%%"|format(w.rate * 100) if w.rate is not none else "—" }}</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -57,7 +100,7 @@
     Filter pass rate shows "—" for runs before 2026-09-18 — this tracking didn't exist yet, not a real 0%/100%.
   </p>
   <div class="overflow-x">
-    <table>
+    <table class="runs">
       <thead>
         <tr>
           <th>Started</th><th>Fetched</th><th>Sent to LLM</th><th>Failed</th><th>Deferred</th>
@@ -68,7 +111,7 @@
       <tbody>
         {% for r in run_history %}
           <tr>
-            <td>{{ (r.run.started_at | to_local).strftime("%b %d, %Y %I:%M %p") }}</td>
+            <td><span class="run-dot {{ r.run.status.value }}" style="display:inline-block; margin-right:6px;" title="{{ r.run.status.value }}"></span>{{ (r.run.started_at | to_local).strftime("%b %d, %I:%M %p") }}</td>
             <td>{{ r.run.emails_fetched }}</td>
             <td>{{ r.sent_to_llm }}</td>
             <td>{{ r.run.emails_failed }}</td>
@@ -88,5 +131,13 @@
     </table>
   </div>
 </div>
+
+<p class="verdict" style="padding:0 4px;">
+  About the Gemini numbers: counted from each run's own records, so they're exact for calls this pipeline
+  made, but they can't see anything else using the same Google project (the AI Studio playground, another
+  script). The daily limit of {{ llm_usage.quota }} is the free-tier figure for this model, confirmed in
+  Google AI Studio; if Google's own Rate limit page shows more used than this, something else is spending it.
+  There is no monthly quota — Gemini limits are per-minute and per-day.
+</p>
 
 {% endblock %}

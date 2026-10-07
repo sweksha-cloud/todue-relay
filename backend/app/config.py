@@ -25,6 +25,9 @@ GMAIL_CLIENT_SECRET_PATH = Path(
 GMAIL_TOKEN_PATH = Path(
     os.getenv("GMAIL_TOKEN_PATH", CREDENTIALS_DIR / "gmail_token.json")
 )
+# Which signed-in Google account the dashboard's "Open in Gmail" links open: the mailbox's address,
+# or blank for the browser's first account (/mail/u/0). Only matters with several accounts signed in.
+GMAIL_ACCOUNT_EMAIL = os.getenv("GMAIL_ACCOUNT_EMAIL", "")
 
 # Pre-filter aggressiveness — see docs/design-decisions.md, decision 8 for the reasoning.
 FILTER_LEVEL = os.getenv("FILTER_LEVEL", "moderate")

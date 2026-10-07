@@ -24,11 +24,14 @@ from app.view_helpers import (
     ACTION_TYPE_LABEL,
     STATUS_BADGE_CLASS,
     display_status,
+    friendly_error,
+    gmail_url,
 )
 
 app = FastAPI(title="ToDue Relay")
 
 SECTION_PAGE_SIZE = 25
+DASHBOARD_EXCLUDED = {"failed"}  # shown on /metrics instead (metrics_page)
 ACTION_ITEMS_PAGE_SIZE = 25
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -37,7 +40,9 @@ templates.env.globals["display_status"] = display_status
 templates.env.globals["status_badge_class"] = lambda s: STATUS_BADGE_CLASS.get(s, "")
 templates.env.globals["action_type_label"] = lambda t: ACTION_TYPE_LABEL.get(t, t)
 templates.env.globals["action_type_badge_class"] = lambda t: ACTION_TYPE_BADGE_CLASS.get(t, "")
+templates.env.globals["gmail_url"] = gmail_url
 templates.env.filters["to_local"] = to_local
+templates.env.filters["friendly_error"] = friendly_error
 
 
 @app.on_event("startup")
@@ -99,18 +104,21 @@ def dashboard(
 ):
     # The emails, grouped by the decision made about each (app/categories.py). Each section pages on its own
     # (?p_<key>=N); the two working sections always show, the others only when they have something.
-    # "skipped" is built and rendered separately, after Action Items, on purpose: it's the least
-    # useful section to see first, and the user asked for it to sit below Action Items specifically,
-    # not just last among the others.
+    # The page order, as the user asked for it (2026-10-07): "Needs your review", then Action Items, then
+    # the calendar sections, with "skipped" last of all. "failed" is not on the dashboard: it lives on
+    # /metrics, and the status strip links there when anything has failed.
+    review_section = None
     sections = []
     skipped_section = None
     for category in categories.CATEGORIES:
-        if not category.visible_in_dashboard:
+        if not category.visible_in_dashboard or category.key in DASHBOARD_EXCLUDED:
             continue  # e.g. marked_correct: tracked for the stats, never shown once confirmed right
         built = _build_section(db, request, category)
         if built is None:
             continue
-        if category.key == "skipped":
+        if category.key == "needs_review":
+            review_section = built
+        elif category.key == "skipped":
             skipped_section = built
         else:
             sections.append(built)
@@ -129,8 +137,7 @@ def dashboard(
         db, limit=ACTION_ITEMS_PAGE_SIZE, offset=action_offset, since=range_since, until=range_until
     )
     latest_run = repository.get_latest_run(db)
-    parked_count = repository.count_parked_failures(db)
-    parked = repository.list_parked_failures(db, limit=5)
+    failed_count = repository.count_category(db, "failed")
     correction_rate = repository.get_correction_rate(db)
     since = datetime.now(timezone.utc) - timedelta(days=7)
     caught_this_week = repository.count_deadlines_caught_since(db, since)
@@ -152,13 +159,13 @@ def dashboard(
         request,
         "index.html",
         {
+            "review_section": review_section,
             "sections": sections,
             "skipped_section": skipped_section,
             "action_items_by_day": action_items_by_day,
             "action_range_buttons": action_range_buttons,
             "latest_run": latest_run,
-            "parked_count": parked_count,
-            "parked": parked,
+            "failed_count": failed_count,
             "correction_rate": correction_rate,
             "caught_this_week": caught_this_week,
             "llm_usage": llm_usage,
@@ -200,6 +207,7 @@ def metrics_page(request: Request, db: Session = Depends(get_db)):
     """Observability layer (2026-09-18): a thin read-only view over
     aggregates in app/metrics.py — nothing here writes anything.
     """
+    failed = _build_section(db, request, categories.CATEGORY_BY_KEY["failed"])
     return templates.TemplateResponse(
         request,
         "metrics.html",
@@ -207,6 +215,9 @@ def metrics_page(request: Request, db: Session = Depends(get_db)):
             "run_history": metrics.run_history(db),
             "weekly_correction_rate": metrics.weekly_correction_rate(db),
             "llm_usage": metrics.daily_llm_usage(db),
+            "failed_section": failed,
+            "parked_count": repository.count_parked_failures(db),
+            "parked": repository.list_parked_failures(db, limit=5),
         },
     )
 

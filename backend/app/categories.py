@@ -38,7 +38,7 @@ CATEGORIES: tuple[Category, ...] = (
     Category(
         "to_check",
         "On your calendar",
-        "Added automatically. Mark it correct or incorrect, reschedule it, or remove it.",
+        "Added automatically. Mark it incorrect, reschedule it, or remove it.",
         open_by_default=True,
         show_when_empty=True,
     ),
@@ -82,3 +82,4 @@ CATEGORIES: tuple[Category, ...] = (
 )
 
 CATEGORY_KEYS = tuple(c.key for c in CATEGORIES)
+CATEGORY_BY_KEY = {c.key: c for c in CATEGORIES}
