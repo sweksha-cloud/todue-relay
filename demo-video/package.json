@@ -1,0 +1,24 @@
+{
+  "name": "todue-relay-demo-video",
+  "private": true,
+  "description": "The ToDue Relay demo video, built with Remotion from the real pipeline's output on fake emails.",
+  "scripts": {
+    "studio": "remotion studio",
+    "record": "node scripts/record-dashboard.mjs",
+    "render": "remotion render TodueDemo out/todue-demo.mp4",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.534",
+    "@remotion/google-fonts": "^4.0.534",
+    "@remotion/transitions": "^4.0.534",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "remotion": "^4.0.534"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "playwright-core": "^1.63.0",
+    "typescript": "^7.0.2"
+  }
+}

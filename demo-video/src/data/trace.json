@@ -1,0 +1,203 @@
+{
+  "generated_at": "2026-10-07T10:40:45.317412+00:00",
+  "emails": [
+    {
+      "id": "demo-01",
+      "sender": "Financial Aid Office",
+      "subject": "Reminder: scholarship application due Oct 20",
+      "snippet": "Hi Sam, This is a reminder that the Merit Scholarship application is due Tuesday, October 20, 2026 at 11:59 PM",
+      "filter": {
+        "signals": {
+          "keyword": true,
+          "action_verb": true,
+          "date_pattern": true
+        },
+        "passed": true
+      },
+      "extraction": {
+        "email_id": "demo-01",
+        "event_name": "Merit Scholarship application",
+        "deadline_date": "October 20, 2026 at 11:59 PM PT",
+        "source_context": "The Merit Scholarship application is due Tuesday, October 20, 2026 at 11:59 PM PT.",
+        "confidence": "high",
+        "action_type": "deadline",
+        "is_recurring": false,
+        "recurrence_rule": null
+      },
+      "route": "auto_scheduled",
+      "deadline": "2026-10-21T06:59:00+00:00",
+      "has_time": true
+    },
+    {
+      "id": "demo-02",
+      "sender": "Design Club",
+      "subject": "Product Design Info Session: Thursday, Oct 15",
+      "snippet": "Join us for a Product Design info session with alumni from three studios on Thursday, October 15 at 6:00 PM in",
+      "filter": {
+        "signals": {
+          "keyword": true,
+          "action_verb": false,
+          "date_pattern": true
+        },
+        "passed": true
+      },
+      "extraction": {
+        "email_id": "demo-02",
+        "event_name": "Product Design Info Session Registration",
+        "deadline_date": "October 14, 2026",
+        "source_context": "Registration closes on October 14 for the Product Design info session.",
+        "confidence": "high",
+        "action_type": "deadline",
+        "is_recurring": false,
+        "recurrence_rule": null
+      },
+      "route": "auto_scheduled",
+      "deadline": "2026-10-14T10:39:00+00:00",
+      "has_time": false
+    },
+    {
+      "id": "demo-03",
+      "sender": "Peakline Outdoors",
+      "subject": "New arrivals just landed",
+      "snippet": "Fresh jackets, trail shoes and packs for the season. Browse the new collection and find your next favorite gea",
+      "filter": {
+        "signals": {
+          "keyword": false,
+          "action_verb": false,
+          "date_pattern": false
+        },
+        "passed": false
+      },
+      "extraction": null,
+      "route": "filtered_out",
+      "deadline": null,
+      "has_time": false
+    },
+    {
+      "id": "demo-04",
+      "sender": "Engineering Alumni",
+      "subject": "RSVP: Fall Engineering Mixer",
+      "snippet": "You're invited to the Fall Engineering Mixer on October 22 at 7 PM. Please RSVP by Friday, October 16 so we ca",
+      "filter": {
+        "signals": {
+          "keyword": true,
+          "action_verb": false,
+          "date_pattern": true
+        },
+        "passed": true
+      },
+      "extraction": {
+        "email_id": "demo-04",
+        "event_name": "Fall Engineering Mixer RSVP",
+        "deadline_date": "Friday, October 16, 2026",
+        "source_context": "Please RSVP by Friday, October 16 so catering can be finalized for the Fall Engineering Mixer.",
+        "confidence": "high",
+        "action_type": "deadline",
+        "is_recurring": false,
+        "recurrence_rule": null
+      },
+      "route": "auto_scheduled",
+      "deadline": "2026-10-16T10:32:00+00:00",
+      "has_time": false
+    },
+    {
+      "id": "demo-05",
+      "sender": "Streamly",
+      "subject": "Your weekly mix is ready",
+      "snippet": "We picked 30 songs we think you'll love, based on what you played this week. Open the app to listen.",
+      "filter": {
+        "signals": {
+          "keyword": false,
+          "action_verb": false,
+          "date_pattern": true
+        },
+        "passed": false
+      },
+      "extraction": null,
+      "route": "filtered_out",
+      "deadline": null,
+      "has_time": false
+    },
+    {
+      "id": "demo-06",
+      "sender": "Residential Life",
+      "subject": "Spring housing: renewal window",
+      "snippet": "Hi Sam, Spring housing renewals are tentatively due October 30, but that date may still move once room counts ",
+      "filter": {
+        "signals": {
+          "keyword": true,
+          "action_verb": true,
+          "date_pattern": true
+        },
+        "passed": true
+      },
+      "extraction": null,
+      "route": "failed",
+      "deadline": null,
+      "has_time": false
+    },
+    {
+      "id": "demo-07",
+      "sender": "Brightside Coffee",
+      "subject": "You've earned a free drink",
+      "snippet": "Thanks for being a regular! Your next drink is on us. Show this email at any Brightside location.",
+      "filter": {
+        "signals": {
+          "keyword": false,
+          "action_verb": false,
+          "date_pattern": false
+        },
+        "passed": false
+      },
+      "extraction": null,
+      "route": "filtered_out",
+      "deadline": null,
+      "has_time": false
+    },
+    {
+      "id": "demo-08",
+      "sender": "Maya Chen",
+      "subject": "Coffee chat next week?",
+      "snippet": "Hey Sam, I'd love to hear about your internship search. Are you free for a coffee chat sometime next week? Let",
+      "filter": {
+        "signals": {
+          "keyword": false,
+          "action_verb": true,
+          "date_pattern": true
+        },
+        "passed": true
+      },
+      "extraction": {
+        "email_id": "demo-08",
+        "event_name": "Coffee chat scheduling",
+        "deadline_date": null,
+        "source_context": "Maya is asking if you are free for a coffee chat next week and to let her know what times work for you.",
+        "confidence": "low",
+        "action_type": "needs_reply",
+        "is_recurring": false,
+        "recurrence_rule": null
+      },
+      "route": "action_item",
+      "deadline": null,
+      "has_time": false
+    },
+    {
+      "id": "demo-09",
+      "sender": "Jordan Lee",
+      "subject": "Photos from the hike",
+      "snippet": "Uploaded the photos from Saturday's hike to the shared album. The one at the summit came out great.",
+      "filter": {
+        "signals": {
+          "keyword": false,
+          "action_verb": false,
+          "date_pattern": false
+        },
+        "passed": false
+      },
+      "extraction": null,
+      "route": "filtered_out",
+      "deadline": null,
+      "has_time": false
+    }
+  ]
+}
