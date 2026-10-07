@@ -1,82 +1,113 @@
-<tr id="row-{{ email.email_id }}">
-  <td>{{ email.email_subject }}</td>
-  <td>{{ email.extraction_event_name if email.extraction_event_name else "—" }}</td>
-  <td>
-    {% if email.extraction_deadline_parsed %}
-      {% if email.extraction_has_time %}
-        {{ (email.extraction_deadline_parsed | to_local).strftime("%b %d, %Y %I:%M %p") }}
-      {% else %}
-        {# No real time was extracted — showing one anyway would fabricate precision that was
-           never there (a date-only string gets whatever wall-clock time the pipeline happened to
-           run at as its filler hour/minute; see app/date_utils.py parse_deadline_date). The real
-           Calendar event is unaffected: calendar_client.py already makes it all-day when
-           has_time is false. #}
-        {{ (email.extraction_deadline_parsed | to_local).strftime("%b %d, %Y") }}
-      {% endif %}
-    {% else %}
-      <span class="verdict">no date</span>
-    {% endif %}
-    <br>
-    <span class="badge {{ status_badge_class(display_status(email)) }}">{{ display_status(email) }}</span>
-    {% if email.is_implausible_date %}
-      <span class="badge badge-failed" title="Date is outside the plausible range — likely a parsing error, not a real deadline this far out">⚠ implausible date</span>
-    {% endif %}
-    {% if email.extraction_is_recurring %}
-      <span class="badge badge-recurring" title="Scheduled as a recurring Calendar event ({{ email.extraction_recurrence_rule }})">🔁 recurring</span>
-    {% endif %}
-    {% if email.date_changed_from %}
-      <span class="badge badge-rescheduled" title="Calendar event moved automatically">📅 rescheduled: was {{ (email.date_changed_from | to_local).strftime("%b %d, %Y") }}, now {{ (email.extraction_deadline_parsed | to_local).strftime("%b %d, %Y") }}</span>
-    {% elif email.duplicate_of_email_id %}
-      <span class="badge badge-duplicate" title="Recognized as the same deadline as an already-tracked email">🔗 duplicate, already tracked</span>
-    {% endif %}
-    {% if email.is_stale %}
-      <span class="badge badge-skipped" title="A newer email updated this deadline's date">⏭ superseded</span>
-    {% endif %}
-  </td>
-  <td class="verdict">{{ (email.created_at | to_local).strftime("%b %d, %Y %I:%M %p") }}</td>
-  <td>
-    {% if display_status(email) == "needs review" %}
-      <div style="display:flex; flex-wrap:wrap; align-items:center; gap:4px;">
-        {% if email.extraction_deadline_parsed %}
-          <button class="vote" hx-post="/emails/{{ email.email_id }}/approve" hx-swap="none" title="Add it to your calendar at the date it found">✓ Approve</button>
+{% from "_icons.html" import icon %}
+{% set when = email.extraction_deadline_parsed | to_local if email.extraction_deadline_parsed else none %}
+<li class="item" id="row-{{ email.email_id }}">
+  {% if when %}
+    <div class="date-chip" aria-hidden="true"><span class="mon">{{ when.strftime("%b") | upper }}</span><span class="day">{{ when.day }}</span></div>
+  {% else %}
+    <div class="date-chip none" aria-hidden="true">{{ icon("calendar") }}</div>
+  {% endif %}
+
+  <div class="item-main">
+    <div class="item-title">{{ email.extraction_event_name if email.extraction_event_name else email.email_subject }}</div>
+    <div class="item-meta">
+      {% if when %}
+        {% if email.extraction_has_time %}
+          <span>{{ when.strftime("%b %d, %Y") }} &middot; {{ when.strftime("%I:%M %p") }}</span>
+        {% else %}
+          {# No real time was extracted — showing one anyway would fabricate precision that was
+             never there (a date-only string gets whatever wall-clock time the pipeline happened to
+             run at as its filler hour/minute; see app/date_utils.py parse_deadline_date). The real
+             Calendar event is unaffected: calendar_client.py already makes it all-day when
+             has_time is false. #}
+          <span>{{ when.strftime("%b %d, %Y") }}</span> <span class="muted">all day</span>
         {% endif %}
-        <form hx-post="/emails/{{ email.email_id }}/approve-at" hx-swap="none" style="display:inline-flex; gap:4px; align-items:center;">
-          <input type="datetime-local" name="new_datetime" required style="font-size:0.75rem; padding:2px;">
-          <button class="vote" type="submit" title="Add it to your calendar at a time you choose (its date is wrong, or it has none)">📅 Reschedule</button>
-        </form>
-        <button class="vote" hx-post="/emails/{{ email.email_id }}/decline" hx-swap="none" title="Leave it off your calendar">✗ Dismiss</button>
+      {% else %}
+        <span class="muted">no date</span>
+      {% endif %}
+      {% if email.is_implausible_date %}
+        <span class="badge badge-failed" title="Date is outside the plausible range — likely a parsing error, not a real deadline this far out">{{ icon("alert") }} implausible date</span>
+      {% endif %}
+      {% if email.extraction_is_recurring %}
+        <span class="badge badge-recurring" title="Scheduled as a recurring Calendar event ({{ email.extraction_recurrence_rule }})">{{ icon("repeat") }} recurring</span>
+      {% endif %}
+      {% if email.date_changed_from %}
+        <span class="badge badge-rescheduled" title="Calendar event moved automatically: was {{ (email.date_changed_from | to_local).strftime("%b %d, %Y") }}, now {{ when.strftime("%b %d, %Y") }}">moved from {{ (email.date_changed_from | to_local).strftime("%b %d") }}</span>
+      {% elif email.duplicate_of_email_id %}
+        <span class="badge badge-duplicate" title="Recognized as the same deadline as an already-tracked email">{{ icon("link") }} duplicate, already tracked</span>
+      {% endif %}
+      {% if email.is_stale %}
+        <span class="badge badge-skipped" title="A newer email updated this deadline's date">superseded</span>
+      {% endif %}
+      {% if display_status(email) == "processing" %}
+        <span class="badge badge-processing">processing</span>
+      {% endif %}
+    </div>
+    <div class="item-sub">
+      {% if email.extraction_event_name %}<span class="subject">From &ldquo;{{ email.email_subject }}&rdquo;</span><span class="sep">&middot;</span>{% endif %}<span class="when">processed {{ (email.created_at | to_local).strftime("%b %d, %I:%M %p") }}</span>
+    </div>
+    {% if email.error_message and display_status(email) == "failed" %}
+      <div class="item-sub"><span class="subject">{{ email.error_message | truncate(120) }}</span></div>
+    {% endif %}
+  </div>
+
+  <div class="item-actions">
+    {% if display_status(email) == "needs review" %}
+      {% if email.extraction_deadline_parsed %}
+        <button class="btn btn-primary" hx-post="/emails/{{ email.email_id }}/approve" hx-swap="none" hx-disabled-elt="this" title="Add it to your calendar at the date it found">{{ icon("check") }} Approve</button>
+      {% endif %}
+      <div class="dropdown">
+        <button class="btn" type="button" data-dropdown-toggle title="Add it to your calendar at a time you choose (its date is wrong, or it has none)">{{ icon("calendar") }} Reschedule</button>
+        <div class="dropdown-panel">
+          <form hx-post="/emails/{{ email.email_id }}/approve-at" hx-swap="none">
+            <span class="label">Add to your calendar at</span>
+            <input type="datetime-local" name="new_datetime" required>
+            <button class="btn btn-primary" type="submit">Add to calendar</button>
+          </form>
+        </div>
       </div>
+      <button class="btn btn-ghost" hx-post="/emails/{{ email.email_id }}/decline" hx-swap="none" title="Leave it off your calendar">{{ icon("x") }} Dismiss</button>
     {% elif email.calendar_event_id %}
       {# Live Calendar event. Reschedule and Remove stay available whether or not a verdict has been recorded.
-         Reschedule alone records NO verdict (the user may just want a different time); ✗ Incorrect records a
+         Reschedule alone records NO verdict (the user may just want a different time); Incorrect records a
          wrong vote without touching the event, and can be followed by a Reschedule to fix the time. #}
-      <div style="display:flex; flex-wrap:wrap; align-items:center; gap:4px;">
-        {% if email.user_correction is none %}
-          <button class="vote" hx-post="/emails/{{ email.email_id }}/correct" hx-vals='{"is_correct": "true"}' hx-swap="none">✓ Correct</button>
-          <button class="vote" hx-post="/emails/{{ email.email_id }}/correct" hx-vals='{"is_correct": "false"}' hx-swap="none">✗ Incorrect</button>
-        {% elif email.user_correction %}
-          <span class="verdict">Marked correct</span>
-        {% else %}
-          <span class="verdict">Marked incorrect — choose reschedule or remove</span>
-        {% endif %}
-        <form hx-post="/emails/{{ email.email_id }}/reschedule" hx-swap="none" style="display:inline-flex; gap:4px; align-items:center;">
-          <input type="datetime-local" name="new_datetime" required style="font-size:0.75rem; padding:2px;">
-          <button class="vote" type="submit">📅 Reschedule</button>
-        </form>
-        <button class="vote" hx-post="/emails/{{ email.email_id }}/remove" hx-swap="none" hx-confirm="Remove this event from your Google Calendar?">🗑 Remove</button>
+      {% if email.user_correction is none %}
+        <button class="btn" hx-post="/emails/{{ email.email_id }}/correct" hx-vals='{"is_correct": "true"}' hx-swap="none" title="The event is right">{{ icon("check") }} Correct</button>
+        <button class="btn" hx-post="/emails/{{ email.email_id }}/correct" hx-vals='{"is_correct": "false"}' hx-swap="none" title="Something about the event is wrong">{{ icon("x") }} Incorrect</button>
+      {% elif email.user_correction %}
+        <span class="verdict">Marked correct</span>
+      {% else %}
+        <span class="verdict">Marked incorrect — choose reschedule or remove</span>
+      {% endif %}
+      <div class="dropdown">
+        <button class="btn" type="button" data-dropdown-toggle>{{ icon("calendar") }} Reschedule</button>
+        <div class="dropdown-panel">
+          <form hx-post="/emails/{{ email.email_id }}/reschedule" hx-swap="none">
+            <span class="label">Move the event to</span>
+            <input type="datetime-local" name="new_datetime" required>
+            <button class="btn btn-primary" type="submit">Move event</button>
+          </form>
+        </div>
       </div>
     {% elif email.extraction_event_name %}
       {% if email.user_correction is none %}
-        <button class="vote" hx-post="/emails/{{ email.email_id }}/correct" hx-vals='{"is_correct": "true"}' hx-swap="none">✓ Correct</button>
-        <button class="vote" hx-post="/emails/{{ email.email_id }}/correct" hx-vals='{"is_correct": "false"}' hx-swap="none">✗ Incorrect</button>
+        <button class="btn" hx-post="/emails/{{ email.email_id }}/correct" hx-vals='{"is_correct": "true"}' hx-swap="none">{{ icon("check") }} Correct</button>
+        <button class="btn" hx-post="/emails/{{ email.email_id }}/correct" hx-vals='{"is_correct": "false"}' hx-swap="none">{{ icon("x") }} Incorrect</button>
       {% else %}
         <span class="verdict">Marked {{ "correct" if email.user_correction else "incorrect" }}</span>
       {% endif %}
     {% endif %}
-    {# Always offered, whatever the row's status: trashing the SOURCE EMAIL is independent of any
-       verdict, Calendar event or review decision above — those are about the extraction; this is
-       about the email itself. Recoverable in Gmail's own Trash for 30 days, never a permanent
-       delete (docs/design-decisions.md, decision 28). #}
-    <button class="vote" hx-post="/emails/{{ email.email_id }}/trash" hx-swap="none" hx-confirm="Move this email to Gmail's trash? (Recoverable there for 30 days.)" title="Move the source email to Gmail's trash">Trash email</button>
-  </td>
-</tr>
+    {# The rarely used, destructive actions sit in the "more" menu. Trashing the SOURCE EMAIL is always
+       offered, whatever the row's status: it is independent of any verdict, Calendar event or review
+       decision above — those are about the extraction; this is about the email itself. Recoverable in
+       Gmail's own Trash for 30 days, never a permanent delete (docs/design-decisions.md, decision 28). #}
+    <div class="dropdown">
+      <button class="btn btn-ghost btn-icon" type="button" data-dropdown-toggle aria-label="More actions" title="More actions">{{ icon("more") }}</button>
+      <div class="dropdown-panel">
+        {% if email.calendar_event_id and display_status(email) != "needs review" %}
+          <button class="menu-item danger" hx-post="/emails/{{ email.email_id }}/remove" hx-swap="none" hx-confirm="Remove this event from your Google Calendar?">{{ icon("calendar-x") }} Remove from calendar</button>
+        {% endif %}
+        <button class="menu-item" hx-post="/emails/{{ email.email_id }}/trash" hx-swap="none" hx-confirm="Move this email to Gmail's trash? (Recoverable there for 30 days.)" title="Move the source email to Gmail's trash">{{ icon("trash") }} Trash email</button>
+      </div>
+    </div>
+  </div>
+</li>

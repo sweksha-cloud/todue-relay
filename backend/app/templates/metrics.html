@@ -3,7 +3,7 @@
 {% block content %}
 
 <div class="card">
-  <h2 style="font-size:1.05rem; margin-top:0;">LLM usage today</h2>
+  <h2 class="card-title">LLM usage today</h2>
   <div class="summary-row">
     <div class="stat">
       <div class="num">{{ llm_usage.calls }} / {{ llm_usage.quota }}</div>
@@ -18,9 +18,7 @@
       <div class="label">calls since {{ llm_usage.month_start.strftime("%b %d") }}</div>
     </div>
   </div>
-  <div style="background:var(--border); border-radius:999px; height:8px; margin-top:12px; overflow:hidden;">
-    <div style="background:{{ '#e5484d' if llm_usage.warning else '#1a6fd1' }}; height:100%; width:{{ ([llm_usage.pct, 100]|min)|round(1) if llm_usage.pct is not none else 0 }}%;"></div>
-  </div>
+  <div class="meter {{ 'warn' if llm_usage.warning else '' }}"><div style="width:{{ ([llm_usage.pct, 100]|min)|round(1) if llm_usage.pct is not none else 0 }}%;"></div></div>
   <p class="verdict" style="margin-top:10px; margin-bottom:0;">
     Counted from each run's own records, so it's exact for calls this pipeline made — but it can't see
     anything else using the same Google project (the AI Studio playground, another script). The daily
@@ -31,7 +29,7 @@
 </div>
 
 <div class="card">
-  <h2 style="font-size:1.05rem; margin-top:0;">Weekly correction rate</h2>
+  <h2 class="card-title">Weekly correction rate</h2>
   {% if weekly_correction_rate %}
     <div class="overflow-x">
       <table>
@@ -54,8 +52,8 @@
 </div>
 
 <div class="card">
-  <h2 style="font-size:1.05rem; margin-top:0;">Recent runs</h2>
-  <p class="verdict" style="margin-top:-8px;">
+  <h2 class="card-title">Recent runs</h2>
+  <p class="verdict" style="margin-top:0;">
     Filter pass rate shows "—" for runs before 2026-09-18 — this tracking didn't exist yet, not a real 0%/100%.
   </p>
   <div class="overflow-x">
@@ -81,7 +79,7 @@
             <td>
               {{ "%.0f%%"|format(r.filter_pass_rate * 100) if r.filter_pass_rate is not none else "—" }}
               {% if r.anomaly %}
-                <span class="badge badge-failed" title="Deviates from the trailing average by more than FILTER_PASS_RATE_ANOMALY_THRESHOLD">⚠ anomaly</span>
+                <span class="badge badge-failed" title="Deviates from the trailing average by more than FILTER_PASS_RATE_ANOMALY_THRESHOLD">anomaly</span>
               {% endif %}
             </td>
           </tr>
