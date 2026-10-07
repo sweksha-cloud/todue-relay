@@ -72,6 +72,15 @@ The reasoning behind these, with the alternatives considered and the evidence, i
 
 ## Setup
 
+**Use your own keys.** Each copy runs on its owner's accounts; none of mine are shared. You need:
+
+- your own **Google Cloud project and OAuth client** (step 1), which reads your Gmail and writes your Calendar
+- your own **Gemini API key** (step 2); the free tier is enough for one inbox
+- a **Postgres database** (step 3), local Docker or a free hosted one
+
+**AWS is optional.** It is how my copy runs on a schedule (see [Deployment](#deployment)). Yours can
+run locally, or hourly through GitHub Actions with your own repository secrets.
+
 ### 1. Google Cloud: Gmail and Calendar access
 
 1. Create a project at [console.cloud.google.com](https://console.cloud.google.com).
@@ -222,6 +231,12 @@ which has no SQLite equivalent, so the suite needs a real Postgres. It runs on
 every push via `.github/workflows/tests.yml`, with a Postgres service container.
 
 ## Deployment
+
+This section describes how my own copy runs. You don't need AWS to run yours: run the pipeline
+locally, or enable the hourly schedule in `.github/workflows/pipeline.yml` with your own
+`GEMINI_API_KEY` and `DATABASE_URL` as repository secrets and your `CALENDAR_TIMEZONE` as a repository
+variable. Run the pipeline once locally first: the Google sign-in it asks for is saved in your database,
+which is where the scheduled runs read it from.
 
 **Live: AWS Lambda + EventBridge Scheduler** (since 2026-09-20). An EventBridge
 Scheduler schedule (`cron(0 * * * ? *)`: every hour, on the hour, UTC) invokes the
