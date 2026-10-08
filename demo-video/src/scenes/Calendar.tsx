@@ -49,7 +49,7 @@ export const Calendar: React.FC = () => {
           ))}
         </div>
       </div>
-      <Caption text="Auto-scheduled events land on the calendar, on their dates" from={sec(0.8)} />
+      <Caption text="Auto-scheduled deadlines and to-dos land on the calendar, on their dates" from={sec(0.8)} />
       <TechTag label="Written through the Google Calendar API" />
     </SceneFrame>
   );
