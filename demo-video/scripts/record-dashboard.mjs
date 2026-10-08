@@ -41,7 +41,7 @@ await page.goto(DASHBOARD_URL);
 await page.waitForLoadState("networkidle");
 const start = at(); // everything before this is a blank page loading; trimmed off below
 await page.mouse.move(800, 300);
-await page.waitForTimeout(3200); // time to read the held-back item
+await page.waitForTimeout(1500); // time to see the held-back item
 
 // The held-back email in "Needs your review".
 const row = page.locator("#section-needs_review .item").first();
@@ -50,8 +50,8 @@ const approve = row.getByRole("button", { name: "Approve" });
 let approveClickAt;
 if (await approve.count()) {
   const box = await approve.boundingBox();
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 25 });
-  await page.waitForTimeout(700);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 12 });
+  await page.waitForTimeout(350);
   approveClickAt = at();
   await Promise.all([page.waitForEvent("load"), page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)]);
 } else {
@@ -70,7 +70,7 @@ if (await approve.count()) {
   await Promise.all([page.waitForEvent("load"), page.mouse.click(abox.x + abox.width / 2, abox.y + abox.height / 2)]);
 }
 await page.waitForLoadState("networkidle");
-await page.waitForTimeout(900);
+await page.waitForTimeout(400);
 
 // Scroll to where it now sits, in "On your calendar", and point at it.
 const landed = page.locator("#section-to_check .item", { hasText: title }).first();
@@ -79,7 +79,7 @@ await page.waitForTimeout(900);
 await page.mouse.move(1500, 120, { steps: 20 }); // out of the way: the highlight marks the item
 const calendarShownAt = at();
 await landed.evaluate((el) => { el.style.transition = "background .4s"; el.style.background = "#ecfdf3"; el.style.borderRadius = "10px"; });
-await page.waitForTimeout(5000);
+await page.waitForTimeout(2200);
 const end = at();
 
 await context.close();

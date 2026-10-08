@@ -7,7 +7,7 @@
 Both need DEMO_DATABASE_URL, a Postgres database whose name contains "demo" (refused otherwise, so the
 production database can't be pointed at by mistake). Gmail is replaced by the fake emails below and
 Google Calendar by an in-memory stand-in, so nothing here can read real mail or write a real event.
-Gemini is real: `run` spends one call per email that passes the pre-filter (5 of the 14 below).
+Gemini is real: `run` spends one call per email that passes the pre-filter (8 of the 17 below).
 
 `run` also writes demo-video/src/data/trace.json: what each email scored on the pre-filter, the JSON
 Gemini actually returned, and where the pipeline routed it. The video's pipeline scene is drawn from it.
@@ -31,6 +31,7 @@ os.environ["DATABASE_URL"] = DEMO_URL  # before any app import: app.db.session r
 from app import alerts, calendar_client, gmail_client, llm_client, pipeline  # noqa: E402
 from app.db.models import Base, ProcessedEmail  # noqa: E402
 from app.db.session import engine, get_session  # noqa: E402
+from app import filters  # noqa: E402
 from app.filters import is_actionable_candidate, score_email  # noqa: E402
 from app.gmail_client import EmailMessage  # noqa: E402
 from app.view_helpers import display_status  # noqa: E402
@@ -84,6 +85,14 @@ FAKE_EMAILS = [
            "Alex left a comment on your photo. Open the app to reply."),
     _email(14, "Fresh Basket <deals@freshbasket.com>", "Fresh picks for your weekend",
            "Seasonal produce, new recipes, and a few favorites back in stock."),
+    _email(15, "Prof. Kim <kim@northfield.edu>", "CS 146: Lab 4 due Friday, Oct 23",
+           "Reminder that Lab 4 is due Friday, October 23 at 11:59 PM. Submit your report on the course "
+           "site."),
+    _email(16, "Robotics Club <treasurer@roboticsclub.org>", "Club dues: please pay by Oct 26",
+           "Fall dues are $20. Please pay by Monday, October 26 to keep your membership active."),
+    _email(17, "Northfield Library <library@northfield.edu>", "Library book due Oct 28",
+           "The book you borrowed, Designing Data-Intensive Applications, is due Wednesday, October 28. "
+           "Renew online if you need more time."),
 ]
 
 
@@ -124,6 +133,17 @@ def install_fakes() -> FakeCalendar:
     alerts.notify_parked = lambda *a, **kw: False
     alerts.send_alert = lambda *a, **kw: False
     return cal
+
+
+def _matches(e: EmailMessage) -> dict[str, str | None]:
+    """The text each of the pre-filter's three rule sets matched in this email (what the video shows)."""
+    text = f"{e.subject}\n{e.body_text}"
+    found = {
+        "keyword": filters._COMPILED_KEYWORDS.search(text),
+        "action_verb": filters._COMPILED_ACTIONS.search(text),
+        "date_pattern": filters._COMPILED_DATES.search(text),
+    }
+    return {k: m.group(0) if m else None for k, m in found.items()}
 
 
 def _route(row: ProcessedEmail | None, passed_filter: bool) -> str:
@@ -182,7 +202,7 @@ def run(keep: bool = False, redo: tuple[str, ...] = ()) -> None:
             "sender": e.sender.split(" <")[0],
             "subject": e.subject,
             "snippet": " ".join(e.body_text.split())[:110],
-            "filter": {"signals": signals, "passed": passed},
+            "filter": {"signals": signals, "passed": passed, "matches": _matches(e)},
             "extraction": raw_by_id.get(e.id),
             "route": _route(row, passed),
             "deadline": row.extraction_deadline_parsed.isoformat() if row and row.extraction_deadline_parsed else None,

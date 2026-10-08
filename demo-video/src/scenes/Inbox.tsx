@@ -8,9 +8,9 @@ const ROW_H = 55;
 const ARRIVE = sec(2.2);
 
 // Shown newest first, with the emails that matter mixed in among the everyday ones, as in a real inbox.
-const ORDER = ["demo-10", "demo-02", "demo-03", "demo-11", "demo-05", "demo-04", "demo-13", "demo-07", "demo-12", "demo-06", "demo-09", "demo-14", "demo-08"];
+const ORDER = ["demo-10", "demo-02", "demo-03", "demo-11", "demo-15", "demo-05", "demo-04", "demo-13", "demo-07", "demo-16", "demo-12", "demo-06", "demo-09", "demo-17", "demo-14", "demo-08"];
 const SHOWN = ORDER.map((id) => INBOX_REST.find((e) => e.id === id)).filter((e): e is TraceEmail => Boolean(e));
-const TIMES = ["9:12 AM", "9:05 AM", "8:47 AM", "8:41 AM", "8:30 AM", "8:22 AM", "8:02 AM", "7:58 AM", "7:41 AM", "7:30 AM", "Oct 6", "Oct 6", "Oct 6"];
+const TIMES = ["9:12 AM", "9:05 AM", "8:47 AM", "8:41 AM", "8:36 AM", "8:30 AM", "8:22 AM", "8:02 AM", "7:58 AM", "7:51 AM", "7:41 AM", "7:30 AM", "Oct 6", "Oct 6", "Oct 6", "Oct 6"];
 const UNREAD = 1284;
 
 const Row: React.FC<{ e: TraceEmail; time: string; unread: boolean; highlight?: number }> = ({ e, time, unread, highlight = 0 }) => (

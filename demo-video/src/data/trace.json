@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-08T04:43:41.226853+00:00",
+  "generated_at": "2026-10-08T05:15:12.283596+00:00",
   "emails": [
     {
       "id": "demo-01",
@@ -12,7 +12,12 @@
           "action_verb": true,
           "date_pattern": true
         },
-        "passed": true
+        "passed": true,
+        "matches": {
+          "keyword": "due",
+          "action_verb": "submit",
+          "date_pattern": "Oct 20"
+        }
       },
       "extraction": {
         "email_id": "demo-01",
@@ -39,7 +44,12 @@
           "action_verb": false,
           "date_pattern": true
         },
-        "passed": true
+        "passed": true,
+        "matches": {
+          "keyword": "closes on",
+          "action_verb": null,
+          "date_pattern": "Oct 15"
+        }
       },
       "extraction": {
         "email_id": "demo-02",
@@ -66,7 +76,12 @@
           "action_verb": false,
           "date_pattern": false
         },
-        "passed": false
+        "passed": false,
+        "matches": {
+          "keyword": null,
+          "action_verb": null,
+          "date_pattern": null
+        }
       },
       "extraction": null,
       "route": "filtered_out",
@@ -84,7 +99,12 @@
           "action_verb": false,
           "date_pattern": true
         },
-        "passed": true
+        "passed": true,
+        "matches": {
+          "keyword": "RSVP",
+          "action_verb": null,
+          "date_pattern": "October 22"
+        }
       },
       "extraction": {
         "email_id": "demo-04",
@@ -111,7 +131,12 @@
           "action_verb": false,
           "date_pattern": true
         },
-        "passed": false
+        "passed": false,
+        "matches": {
+          "keyword": null,
+          "action_verb": null,
+          "date_pattern": "this week"
+        }
       },
       "extraction": null,
       "route": "filtered_out",
@@ -129,7 +154,12 @@
           "action_verb": true,
           "date_pattern": true
         },
-        "passed": true
+        "passed": true,
+        "matches": {
+          "keyword": "due",
+          "action_verb": "confirm",
+          "date_pattern": "October 30"
+        }
       },
       "extraction": {
         "email_id": "demo-06",
@@ -156,7 +186,12 @@
           "action_verb": false,
           "date_pattern": false
         },
-        "passed": false
+        "passed": false,
+        "matches": {
+          "keyword": null,
+          "action_verb": null,
+          "date_pattern": null
+        }
       },
       "extraction": null,
       "route": "filtered_out",
@@ -174,7 +209,12 @@
           "action_verb": true,
           "date_pattern": true
         },
-        "passed": true
+        "passed": true,
+        "matches": {
+          "keyword": null,
+          "action_verb": "schedule",
+          "date_pattern": "next week"
+        }
       },
       "extraction": {
         "email_id": "demo-08",
@@ -201,7 +241,12 @@
           "action_verb": false,
           "date_pattern": false
         },
-        "passed": false
+        "passed": false,
+        "matches": {
+          "keyword": null,
+          "action_verb": null,
+          "date_pattern": null
+        }
       },
       "extraction": null,
       "route": "filtered_out",
@@ -219,7 +264,12 @@
           "action_verb": false,
           "date_pattern": false
         },
-        "passed": false
+        "passed": false,
+        "matches": {
+          "keyword": null,
+          "action_verb": null,
+          "date_pattern": null
+        }
       },
       "extraction": null,
       "route": "filtered_out",
@@ -237,7 +287,12 @@
           "action_verb": false,
           "date_pattern": false
         },
-        "passed": false
+        "passed": false,
+        "matches": {
+          "keyword": null,
+          "action_verb": null,
+          "date_pattern": null
+        }
       },
       "extraction": null,
       "route": "filtered_out",
@@ -255,7 +310,12 @@
           "action_verb": false,
           "date_pattern": true
         },
-        "passed": false
+        "passed": false,
+        "matches": {
+          "keyword": null,
+          "action_verb": null,
+          "date_pattern": "This week"
+        }
       },
       "extraction": null,
       "route": "filtered_out",
@@ -273,7 +333,12 @@
           "action_verb": false,
           "date_pattern": false
         },
-        "passed": false
+        "passed": false,
+        "matches": {
+          "keyword": null,
+          "action_verb": null,
+          "date_pattern": null
+        }
       },
       "extraction": null,
       "route": "filtered_out",
@@ -291,11 +356,112 @@
           "action_verb": false,
           "date_pattern": false
         },
-        "passed": false
+        "passed": false,
+        "matches": {
+          "keyword": null,
+          "action_verb": null,
+          "date_pattern": null
+        }
       },
       "extraction": null,
       "route": "filtered_out",
       "deadline": null,
+      "has_time": false
+    },
+    {
+      "id": "demo-15",
+      "sender": "Prof. Kim",
+      "subject": "CS 146: Lab 4 due Friday, Oct 23",
+      "snippet": "Reminder that Lab 4 is due Friday, October 23 at 11:59 PM. Submit your report on the course site.",
+      "filter": {
+        "signals": {
+          "keyword": true,
+          "action_verb": true,
+          "date_pattern": true
+        },
+        "passed": true,
+        "matches": {
+          "keyword": "due",
+          "action_verb": "Submit",
+          "date_pattern": "Oct 23"
+        }
+      },
+      "extraction": {
+        "email_id": "demo-15",
+        "event_name": "Lab 4 submission",
+        "deadline_date": "Friday, October 23 at 11:59 PM",
+        "source_context": "Lab 4 report is due Friday, October 23 at 11:59 PM on the course site.",
+        "confidence": "high",
+        "action_type": "deadline",
+        "is_recurring": false,
+        "recurrence_rule": null
+      },
+      "route": "auto_scheduled",
+      "deadline": "2026-10-24T06:59:00+00:00",
+      "has_time": true
+    },
+    {
+      "id": "demo-16",
+      "sender": "Robotics Club",
+      "subject": "Club dues: please pay by Oct 26",
+      "snippet": "Fall dues are $20. Please pay by Monday, October 26 to keep your membership active.",
+      "filter": {
+        "signals": {
+          "keyword": false,
+          "action_verb": true,
+          "date_pattern": true
+        },
+        "passed": true,
+        "matches": {
+          "keyword": null,
+          "action_verb": "pay",
+          "date_pattern": "Oct 26"
+        }
+      },
+      "extraction": {
+        "email_id": "demo-16",
+        "event_name": "Robotics Club fall dues payment",
+        "deadline_date": "Monday, October 26, 2026",
+        "source_context": "Fall dues are $20 and must be paid by Monday, October 26 to keep membership active.",
+        "confidence": "high",
+        "action_type": "deadline",
+        "is_recurring": false,
+        "recurrence_rule": null
+      },
+      "route": "auto_scheduled",
+      "deadline": "2026-10-27T05:13:00+00:00",
+      "has_time": false
+    },
+    {
+      "id": "demo-17",
+      "sender": "Northfield Library",
+      "subject": "Library book due Oct 28",
+      "snippet": "The book you borrowed, Designing Data-Intensive Applications, is due Wednesday, October 28. Renew online if yo",
+      "filter": {
+        "signals": {
+          "keyword": true,
+          "action_verb": true,
+          "date_pattern": true
+        },
+        "passed": true,
+        "matches": {
+          "keyword": "due",
+          "action_verb": "Renew",
+          "date_pattern": "Oct 28"
+        }
+      },
+      "extraction": {
+        "email_id": "demo-17",
+        "event_name": "Library book due",
+        "deadline_date": "Wednesday, October 28, 2026",
+        "source_context": "The borrowed book Designing Data-Intensive Applications is due at the library on Wednesday, October 28.",
+        "confidence": "high",
+        "action_type": "deadline",
+        "is_recurring": false,
+        "recurrence_rule": null
+      },
+      "route": "auto_scheduled",
+      "deadline": "2026-10-29T05:15:00+00:00",
       "has_time": false
     }
   ]

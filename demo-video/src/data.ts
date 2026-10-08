@@ -9,7 +9,12 @@ export type TraceEmail = {
   sender: string;
   subject: string;
   snippet: string;
-  filter: { signals: { keyword: boolean; action_verb: boolean; date_pattern: boolean }; passed: boolean };
+  filter: {
+    signals: { keyword: boolean; action_verb: boolean; date_pattern: boolean };
+    passed: boolean;
+    // The text each rule set matched (what the real regexes in backend/app/filters.py found), or null.
+    matches: { keyword: string | null; action_verb: string | null; date_pattern: string | null };
+  };
   extraction: Record<string, unknown> | null;
   route: Route;
   deadline: string | null;
@@ -17,21 +22,11 @@ export type TraceEmail = {
 };
 
 export const EMAILS = (trace as { emails: TraceEmail[] }).emails;
+export const PASSED = EMAILS.filter((e) => e.filter.passed);
 
 // The first email is the one that "arrives" during the inbox scene.
 export const NEW_EMAIL = EMAILS[0];
 export const INBOX_REST = EMAILS.slice(1);
-
-/** Why the pre-filter dropped an email, in words, from the signals it did not find. */
-export const filterReason = (e: TraceEmail): string => {
-  const missing = [];
-  if (!e.filter.signals.keyword) missing.push("deadline words");
-  if (!e.filter.signals.action_verb) missing.push("action words");
-  if (!e.filter.signals.date_pattern) missing.push("date");
-  if (!missing.length) return "Too few signals";
-  const last = missing.pop();
-  return `No ${missing.length ? `${missing.join(", ")} or ${last}` : last}`;
-};
 
 /** The extraction as shown on screen: the fields Gemini returned, minus the id echo. */
 export const shownExtraction = (e: TraceEmail) => {

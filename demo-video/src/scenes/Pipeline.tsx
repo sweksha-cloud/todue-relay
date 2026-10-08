@@ -1,15 +1,19 @@
 import React from "react";
 import { AbsoluteFill, interpolate, Sequence, spring, useCurrentFrame, useVideoConfig } from "remotion";
 import { Badge, Caption, SceneFrame, TechTag, useAppear } from "../components";
-import { EMAILS, filterReason, NEW_EMAIL, Route, shownExtraction, TraceEmail } from "../data";
+import { EMAILS, NEW_EMAIL, PASSED, Route, shownExtraction, TraceEmail } from "../data";
 import { C, cardStyle, monoFamily, sec } from "../theme";
 
-const STAGE = sec(5);
+// Stage lengths. The pre-filter gets longest: it is a 17-row rule table plus its summary.
+const FILTER = sec(6.5);
+const EXTRACT = sec(5);
+const GATE = sec(5);
+export const PIPELINE_LENGTH = FILTER + EXTRACT + GATE;
 const STEPS = ["Pre-filter (rules)", "LLM extraction", "Confidence gating"];
 
 const Stepper: React.FC = () => {
   const frame = useCurrentFrame();
-  const active = Math.min(2, Math.floor(frame / STAGE));
+  const active = frame < FILTER ? 0 : frame < FILTER + EXTRACT ? 1 : 2;
   return (
     <div style={{ position: "absolute", top: 54, left: 0, right: 0, display: "flex", justifyContent: "center", gap: 18, alignItems: "center" }}>
       {STEPS.map((s, i) => (
@@ -27,29 +31,72 @@ const Stepper: React.FC = () => {
   );
 };
 
-/* Stage 1: every email meets the rules-based pre-filter; the ones with too few signals stop here. */
+/* Stage 1: the rules-based pre-filter. Each email is scored against three regex rule sets (backend/app/filters.py);
+   it reaches the LLM only if at least 2 of the 3 match. Every token shown is what the real regexes matched. */
+const RULES: { key: "keyword" | "action_verb" | "date_pattern"; label: string }[] = [
+  { key: "keyword", label: "deadline words" },
+  { key: "action_verb", label: "action words" },
+  { key: "date_pattern", label: "date" },
+];
+const COLS = "minmax(0, 1fr) 210px 210px 210px 90px 150px";
+const ROW_STAGGER = 5;
+
+const Token: React.FC<{ text: string | null }> = ({ text }) =>
+  text ? (
+    <span style={{ fontFamily: monoFamily, fontSize: 18, color: C.greenText, background: C.greenSoft, padding: "3px 9px", borderRadius: 6, whiteSpace: "nowrap" }}>"{text}"</span>
+  ) : (
+    <span style={{ fontFamily: monoFamily, fontSize: 18, color: C.borderStrong }}>—</span>
+  );
+
 const FilterStage: React.FC = () => {
   const frame = useCurrentFrame();
+  const decidedCount = EMAILS.filter((_, i) => frame >= 14 + i * ROW_STAGGER).length;
+  const calls = EMAILS.slice(0, decidedCount).filter((e) => e.filter.passed).length;
+  const done = 14 + EMAILS.length * ROW_STAGGER + 6;
+  const summary = useAppear(done);
   return (
-    <AbsoluteFill style={{ padding: "132px 220px 150px", display: "flex", flexDirection: "column", gap: 6 }}>
-      {EMAILS.map((e, i) => {
-        const at = 12 + i * 7;
-        const decided = frame >= at;
-        const dropped = decided && !e.filter.passed;
-        return (
-          <div key={e.id} style={{ ...cardStyle, borderRadius: 10, height: 50, display: "flex", alignItems: "center", gap: 20, padding: "0 22px", fontSize: 21, opacity: dropped ? interpolate(frame, [at, at + 10], [1, 0.45], { extrapolateRight: "clamp" }) : 1 }}>
-            <div style={{ width: 280, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.sender}</div>
-            <div style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textDecoration: dropped ? "line-through" : "none", color: dropped ? C.muted : C.text }}>{e.subject}</div>
-            <div style={{ width: 420, display: "flex", justifyContent: "flex-end" }}>
-              {decided && (e.filter.passed
-                ? <Badge bg={C.accentSoft} color={C.accentText}>✓ Sent to the LLM</Badge>
-                : <Badge bg={C.redSoft} color={C.redText}>✗ {filterReason(e)}</Badge>)}
+    <AbsoluteFill style={{ padding: "112px 150px 0" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div style={{ fontFamily: monoFamily, fontSize: 20, color: C.muted }}>
+          pass if <span style={{ color: C.text }}>score ≥ 2 of 3</span> rule sets match · FILTER_LEVEL=moderate
+        </div>
+        <div style={{ fontFamily: monoFamily, fontSize: 22, color: C.text }}>
+          LLM calls: <span style={{ color: C.accentText, fontWeight: 600 }}>{calls}</span> / {decidedCount}
+        </div>
+      </div>
+      <div style={{ ...cardStyle, borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: COLS, alignItems: "center", gap: 16, padding: "10px 20px", background: C.subtle, fontSize: 16, fontWeight: 700, color: C.muted, letterSpacing: 0.6, textTransform: "uppercase" }}>
+          <div>Email</div>
+          {RULES.map((r) => <div key={r.key}>{r.label}</div>)}
+          <div>Score</div>
+          <div>Result</div>
+        </div>
+        {EMAILS.map((e, i) => {
+          const at = 14 + i * ROW_STAGGER;
+          const shown = frame >= at;
+          const score = RULES.filter((r) => e.filter.signals[r.key]).length;
+          const dim = shown && !e.filter.passed;
+          return (
+            <div key={e.id} style={{ display: "grid", gridTemplateColumns: COLS, alignItems: "center", gap: 16, height: 40, padding: "0 20px", borderTop: `1px solid ${C.border}`, fontSize: 19, background: shown && e.filter.passed ? "#f8faff" : C.card }}>
+              <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: dim ? C.muted : C.text, fontWeight: shown && e.filter.passed ? 600 : 400 }}>{e.subject}</div>
+              {RULES.map((r) => <div key={r.key} style={{ opacity: shown ? 1 : 0 }}><Token text={e.filter.matches[r.key]} /></div>)}
+              <div style={{ fontFamily: monoFamily, fontSize: 19, opacity: shown ? 1 : 0, color: score >= 2 ? C.text : C.muted }}>{score}/3</div>
+              <div style={{ opacity: shown ? 1 : 0 }}>
+                {e.filter.passed
+                  ? <Badge bg={C.accentSoft} color={C.accentText} size={17}>→ LLM</Badge>
+                  : <Badge bg={C.subtle} color={C.muted} size={17}>skipped</Badge>}
+              </div>
             </div>
-          </div>
-        );
-      })}
-      <Caption text="Promos and chatter are filtered out before any LLM call" from={sec(1.4)} to={STAGE} />
-      <TechTag label="Python · hourly on AWS Lambda" corner="bottom" />
+          );
+        })}
+      </div>
+      <Caption text={`Rules-based pre-filter: ${EMAILS.length} emails → ${PASSED.length} LLM calls`} from={done} to={FILTER} />
+      <div style={{ position: "absolute", left: 0, right: 0, bottom: 136, display: "flex", justifyContent: "center", ...summary }}>
+        <div style={{ fontFamily: monoFamily, fontSize: 21, color: C.muted }}>
+          {EMAILS.length - PASSED.length} of {EMAILS.length} emails never reach the LLM: no call, no quota spent
+        </div>
+      </div>
+      <TechTag label="Python regex · AWS Lambda" corner="bottom" />
     </AbsoluteFill>
   );
 };
@@ -66,15 +113,15 @@ const JsonLine: React.FC<{ k: string; v: unknown; at: number; last: boolean }> =
 };
 
 const ExtractStage: React.FC = () => {
-  const passed = EMAILS.filter((e) => e.filter.passed);
+  const passed = PASSED;
   const fields = Object.entries(shownExtraction(NEW_EMAIL) ?? {});
   return (
     <AbsoluteFill style={{ padding: "160px 140px 160px", flexDirection: "row", gap: 48 }}>
-      <div style={{ width: 620, display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ width: 620, display: "flex", flexDirection: "column", gap: 10 }}>
         {passed.map((e, i) => (
-          <div key={e.id} style={{ ...cardStyle, borderRadius: 12, padding: "16px 22px", fontSize: 23, border: e.id === NEW_EMAIL.id ? `2px solid ${C.accent}` : cardStyle.border, ...useAppear(i * 4) }}>
+          <div key={e.id} style={{ ...cardStyle, borderRadius: 12, padding: "11px 20px", fontSize: 21, border: e.id === NEW_EMAIL.id ? `2px solid ${C.accent}` : cardStyle.border, ...useAppear(i * 4) }}>
             <div style={{ fontWeight: 700 }}>{e.subject}</div>
-            <div style={{ color: C.muted, fontSize: 20, marginTop: 4 }}>{e.sender}</div>
+            <div style={{ color: C.muted, fontSize: 18, marginTop: 2 }}>{e.sender}</div>
           </div>
         ))}
       </div>
@@ -113,7 +160,7 @@ const RoutedCard: React.FC<{ e: TraceEmail; at: number }> = ({ e, at }) => {
 };
 
 const GateStage: React.FC = () => {
-  const passed = EMAILS.filter((e) => e.filter.passed);
+  const passed = PASSED;
   let order = 0;
   return (
     <AbsoluteFill style={{ padding: "170px 110px 170px", flexDirection: "row", gap: 32 }}>
@@ -132,8 +179,8 @@ const GateStage: React.FC = () => {
 export const Pipeline: React.FC = () => (
   <SceneFrame>
     <Stepper />
-    <Sequence durationInFrames={STAGE}><FilterStage /></Sequence>
-    <Sequence from={STAGE} durationInFrames={STAGE}><ExtractStage /></Sequence>
-    <Sequence from={STAGE * 2} durationInFrames={STAGE}><GateStage /></Sequence>
+    <Sequence durationInFrames={FILTER}><FilterStage /></Sequence>
+    <Sequence from={FILTER} durationInFrames={EXTRACT}><ExtractStage /></Sequence>
+    <Sequence from={FILTER + EXTRACT} durationInFrames={GATE}><GateStage /></Sequence>
   </SceneFrame>
 );

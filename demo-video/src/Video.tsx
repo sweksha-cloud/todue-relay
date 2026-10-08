@@ -4,7 +4,7 @@ import { fade } from "@remotion/transitions/fade";
 import { slide } from "@remotion/transitions/slide";
 import { TitleCard } from "./scenes/TitleCard";
 import { Inbox } from "./scenes/Inbox";
-import { Pipeline } from "./scenes/Pipeline";
+import { Pipeline, PIPELINE_LENGTH } from "./scenes/Pipeline";
 import { Calendar } from "./scenes/Calendar";
 import { Dashboard } from "./scenes/Dashboard";
 import { sec } from "./theme";
@@ -14,8 +14,8 @@ export const TRANSITION = 12;
 export const SCENES = {
   title: sec(3),
   inbox: sec(4.2), // the new email arrives at 2.2 s; move on soon after
-  pipeline: sec(15),
-  calendar: sec(9),
+  pipeline: PIPELINE_LENGTH,
+  calendar: sec(6),
   dashboard: Math.min(sec(15), sec(timing.durationSec)), // as long as the recording, capped at 15 s
   end: sec(4),
 };

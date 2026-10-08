@@ -14,7 +14,7 @@ GitHub Actions (CI, and CD through GitHub OIDC). The scheduled job runs on AWS; 
 
 ## Demo
 
-**[Watch the demo video](VIDEO_LINK_HERE)** (36 seconds)
+**[Watch the demo video](VIDEO_LINK_HERE)** (31 seconds)
 
 Why a demo? ToDue reads Gmail, which Google classifies as a restricted scope. Opening it to the public requires a paid third-party security audit, renewed annually. This video shows the real pipeline on sample emails; the production version runs hourly on my own inbox.
 

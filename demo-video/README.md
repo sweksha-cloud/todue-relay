@@ -1,13 +1,13 @@
 # Demo video
 
-A 36-second video of ToDue Relay working end to end, built with [Remotion](https://www.remotion.dev)
+A 31-second video of ToDue Relay working end to end, built with [Remotion](https://www.remotion.dev)
 (React components rendered to MP4). 1920x1080, 30 fps, captions, no audio, played at 1.25x speed.
 
 Nothing in it is mocked up by hand. Every email is made up, but what happens to them is real:
 
 - **Pipeline scene** (pre-filter, LLM extraction, confidence gating): drawn from `src/data/trace.json`,
   written by `backend/scripts/demo_video.py run`, which runs the real pipeline (the real pre-filter, the
-  real Gemini call, the real routing) over the fourteen emails in that script.
+  real Gemini call, the real routing) over the seventeen emails in that script.
 - **Dashboard scene:** a screen recording of the real FastAPI dashboard over the same demo database.
 
 Gmail and Google Calendar are replaced by stand-ins for the demo, and the scripts refuse any database
