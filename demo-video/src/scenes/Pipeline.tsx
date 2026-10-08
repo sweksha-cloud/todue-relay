@@ -31,13 +31,13 @@ const Stepper: React.FC = () => {
 const FilterStage: React.FC = () => {
   const frame = useCurrentFrame();
   return (
-    <AbsoluteFill style={{ padding: "150px 220px 150px", display: "flex", flexDirection: "column", gap: 10 }}>
+    <AbsoluteFill style={{ padding: "132px 220px 150px", display: "flex", flexDirection: "column", gap: 6 }}>
       {EMAILS.map((e, i) => {
-        const at = 14 + i * 9;
+        const at = 12 + i * 7;
         const decided = frame >= at;
         const dropped = decided && !e.filter.passed;
         return (
-          <div key={e.id} style={{ ...cardStyle, borderRadius: 12, height: 68, display: "flex", alignItems: "center", gap: 20, padding: "0 24px", fontSize: 24, opacity: dropped ? interpolate(frame, [at, at + 10], [1, 0.45], { extrapolateRight: "clamp" }) : 1 }}>
+          <div key={e.id} style={{ ...cardStyle, borderRadius: 10, height: 50, display: "flex", alignItems: "center", gap: 20, padding: "0 22px", fontSize: 21, opacity: dropped ? interpolate(frame, [at, at + 10], [1, 0.45], { extrapolateRight: "clamp" }) : 1 }}>
             <div style={{ width: 280, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.sender}</div>
             <div style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textDecoration: dropped ? "line-through" : "none", color: dropped ? C.muted : C.text }}>{e.subject}</div>
             <div style={{ width: 420, display: "flex", justifyContent: "flex-end" }}>
@@ -49,7 +49,7 @@ const FilterStage: React.FC = () => {
         );
       })}
       <Caption text="Promos and chatter are filtered out before any LLM call" from={sec(1.4)} to={STAGE} />
-      <TechTag label="Python · hourly on AWS Lambda" />
+      <TechTag label="Python · hourly on AWS Lambda" corner="bottom" />
     </AbsoluteFill>
   );
 };
@@ -87,7 +87,7 @@ const ExtractStage: React.FC = () => {
         <div>{"}"}</div>
       </div>
       <Caption text="The LLM returns structured, schema-validated JSON" from={sec(0.6)} />
-      <TechTag label="Gemini API · Pydantic" />
+      <TechTag label="Gemini API · Pydantic" corner="bottom" />
     </AbsoluteFill>
   );
 };
@@ -124,7 +124,7 @@ const GateStage: React.FC = () => {
         </div>
       ))}
       <Caption text="High confidence goes to the calendar; low confidence goes to review" from={sec(1)} />
-      <TechTag label="Recorded in PostgreSQL" />
+      <TechTag label="Recorded in PostgreSQL" corner="bottom" />
     </AbsoluteFill>
   );
 };

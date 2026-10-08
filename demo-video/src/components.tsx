@@ -51,11 +51,11 @@ export const Badge: React.FC<{ children: React.ReactNode; bg: string; color: str
   </span>
 );
 
-/** A small label naming the technology behind what is on screen (top-right corner). */
-export const TechTag: React.FC<{ label: string; from?: number; to?: number }> = ({ label, from = 4, to = Infinity }) => {
-  const style = useAppear(from, to, -8);
+/** A small label naming the technology behind what is on screen (top-right, or bottom-right clear of the caption). */
+export const TechTag: React.FC<{ label: string; from?: number; to?: number; corner?: "top" | "bottom" }> = ({ label, from = 4, to = Infinity, corner = "top" }) => {
+  const style = useAppear(from, to, corner === "top" ? -8 : 8);
   return (
-    <div style={{ position: "absolute", top: 34, right: 40, display: "flex", alignItems: "center", gap: 10, fontFamily, fontSize: 21, fontWeight: 600, color: C.muted, background: "rgba(255,255,255,.92)", border: `1px solid ${C.border}`, borderRadius: 999, padding: "9px 18px", ...style }}>
+    <div style={{ position: "absolute", ...(corner === "top" ? { top: 34 } : { bottom: 66 }), right: 40, display: "flex", alignItems: "center", gap: 10, fontFamily, fontSize: 21, fontWeight: 600, color: C.muted, background: "rgba(255,255,255,.92)", border: `1px solid ${C.border}`, borderRadius: 999, padding: "9px 18px", ...style }}>
       <span style={{ width: 9, height: 9, borderRadius: 99, background: C.accent }} />
       {label}
     </div>

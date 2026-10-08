@@ -13,7 +13,7 @@ import timing from "./data/dashboard-timing.json";
 export const TRANSITION = 12;
 export const SCENES = {
   title: sec(3),
-  inbox: sec(8),
+  inbox: sec(4.2), // the new email arrives at 2.2 s; move on soon after
   pipeline: sec(15),
   calendar: sec(9),
   dashboard: Math.min(sec(15), sec(timing.durationSec)), // as long as the recording, capped at 15 s

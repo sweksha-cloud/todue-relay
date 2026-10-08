@@ -5,7 +5,7 @@
   "scripts": {
     "studio": "remotion studio",
     "record": "node scripts/record-dashboard.mjs",
-    "render": "remotion render TodueDemo out/todue-demo.mp4",
+    "render": "remotion render TodueDemo out/todue-demo-1x.mp4 && ffmpeg -y -loglevel error -i out/todue-demo-1x.mp4 -filter:v setpts=PTS/1.25 -r 30 -c:v libx264 -pix_fmt yuv420p -crf 18 -movflags +faststart out/todue-demo.mp4",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

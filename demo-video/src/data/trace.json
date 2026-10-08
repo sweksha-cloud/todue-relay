@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-08T00:20:05.517965+00:00",
+  "generated_at": "2026-10-08T04:43:41.226853+00:00",
   "emails": [
     {
       "id": "demo-01",
@@ -195,6 +195,96 @@
       "sender": "Jordan Lee",
       "subject": "Photos from the hike",
       "snippet": "Uploaded the photos from Saturday's hike to the shared album. The one at the summit came out great.",
+      "filter": {
+        "signals": {
+          "keyword": false,
+          "action_verb": false,
+          "date_pattern": false
+        },
+        "passed": false
+      },
+      "extraction": null,
+      "route": "filtered_out",
+      "deadline": null,
+      "has_time": false
+    },
+    {
+      "id": "demo-10",
+      "sender": "ShopLane",
+      "subject": "Your order has shipped",
+      "snippet": "Good news: your order is on its way. Track your package any time from your account.",
+      "filter": {
+        "signals": {
+          "keyword": false,
+          "action_verb": false,
+          "date_pattern": false
+        },
+        "passed": false
+      },
+      "extraction": null,
+      "route": "filtered_out",
+      "deadline": null,
+      "has_time": false
+    },
+    {
+      "id": "demo-11",
+      "sender": "Linkup",
+      "subject": "12 people viewed your profile",
+      "snippet": "See who's been looking at your profile and grow your network with new connections.",
+      "filter": {
+        "signals": {
+          "keyword": false,
+          "action_verb": false,
+          "date_pattern": false
+        },
+        "passed": false
+      },
+      "extraction": null,
+      "route": "filtered_out",
+      "deadline": null,
+      "has_time": false
+    },
+    {
+      "id": "demo-12",
+      "sender": "Northfield Weekly",
+      "subject": "This week at Northfield",
+      "snippet": "Club highlights, a new cafe in the student center, and photos from homecoming.",
+      "filter": {
+        "signals": {
+          "keyword": false,
+          "action_verb": false,
+          "date_pattern": true
+        },
+        "passed": false
+      },
+      "extraction": null,
+      "route": "filtered_out",
+      "deadline": null,
+      "has_time": false
+    },
+    {
+      "id": "demo-13",
+      "sender": "Pixelpost",
+      "subject": "Someone commented on your post",
+      "snippet": "Alex left a comment on your photo. Open the app to reply.",
+      "filter": {
+        "signals": {
+          "keyword": false,
+          "action_verb": false,
+          "date_pattern": false
+        },
+        "passed": false
+      },
+      "extraction": null,
+      "route": "filtered_out",
+      "deadline": null,
+      "has_time": false
+    },
+    {
+      "id": "demo-14",
+      "sender": "Fresh Basket",
+      "subject": "Fresh picks for your weekend",
+      "snippet": "Seasonal produce, new recipes, and a few favorites back in stock.",
       "filter": {
         "signals": {
           "keyword": false,

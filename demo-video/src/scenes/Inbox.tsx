@@ -4,16 +4,20 @@ import { Caption, SceneFrame, TechTag } from "../components";
 import { INBOX_REST, NEW_EMAIL, TraceEmail } from "../data";
 import { C, cardStyle, sec } from "../theme";
 
-const ROW_H = 78;
+const ROW_H = 55;
 const ARRIVE = sec(2.2);
 
-const TIMES = ["9:12 AM", "8:47 AM", "8:30 AM", "8:02 AM", "7:41 AM", "Oct 6", "Oct 6", "Oct 6"];
+// Shown newest first, with the emails that matter mixed in among the everyday ones, as in a real inbox.
+const ORDER = ["demo-10", "demo-02", "demo-03", "demo-11", "demo-05", "demo-04", "demo-13", "demo-07", "demo-12", "demo-06", "demo-09", "demo-14", "demo-08"];
+const SHOWN = ORDER.map((id) => INBOX_REST.find((e) => e.id === id)).filter((e): e is TraceEmail => Boolean(e));
+const TIMES = ["9:12 AM", "9:05 AM", "8:47 AM", "8:41 AM", "8:30 AM", "8:22 AM", "8:02 AM", "7:58 AM", "7:41 AM", "7:30 AM", "Oct 6", "Oct 6", "Oct 6"];
+const UNREAD = 1284;
 
 const Row: React.FC<{ e: TraceEmail; time: string; unread: boolean; highlight?: number }> = ({ e, time, unread, highlight = 0 }) => (
   <div
     style={{
-      height: ROW_H, display: "flex", alignItems: "center", gap: 22, padding: "0 28px",
-      borderBottom: `1px solid ${C.border}`, fontSize: 25,
+      height: ROW_H, display: "flex", alignItems: "center", gap: 22, padding: "0 26px",
+      borderBottom: `1px solid ${C.border}`, fontSize: 22,
       background: highlight ? `rgba(37,99,235,${0.08 * highlight})` : unread ? C.card : "#fafbfc",
     }}
   >
@@ -46,7 +50,7 @@ export const Inbox: React.FC = () => {
           {["Inbox", "Starred", "Sent", "Drafts"].map((l, i) => (
             <div key={l} style={{ fontSize: 25, padding: "12px 18px", borderRadius: 999, background: i === 0 ? C.accentSoft : "transparent", color: i === 0 ? C.accentText : C.muted, fontWeight: i === 0 ? 700 : 500, display: "flex", justifyContent: "space-between" }}>
               {l}
-              {i === 0 && <span>{frame >= ARRIVE ? 4 : 3}</span>}
+              {i === 0 && <span>{(frame >= ARRIVE ? UNREAD + 1 : UNREAD).toLocaleString("en-US")}</span>}
             </div>
           ))}
         </div>
@@ -59,13 +63,13 @@ export const Inbox: React.FC = () => {
                 <Row e={NEW_EMAIL} time="9:14 AM" unread highlight={glow} />
               </div>
             </div>
-            {INBOX_REST.map((e, i) => (
-              <Row key={e.id} e={e} time={TIMES[i]} unread={i < 3} />
+            {SHOWN.map((e, i) => (
+              <Row key={e.id} e={e} time={TIMES[i]} unread />
             ))}
           </div>
         </div>
       </div>
-      <Caption text="An inbox full of mail: some of it hides a deadline" from={6} to={ARRIVE + 6} />
+      <Caption text="Too much mail: the important things get buried" from={6} to={ARRIVE + 6} />
       <Caption text="New email arrives" from={ARRIVE + 10} />
       <TechTag label="Read through the Gmail API" />
     </SceneFrame>

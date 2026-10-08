@@ -7,7 +7,7 @@
 Both need DEMO_DATABASE_URL, a Postgres database whose name contains "demo" (refused otherwise, so the
 production database can't be pointed at by mistake). Gmail is replaced by the fake emails below and
 Google Calendar by an in-memory stand-in, so nothing here can read real mail or write a real event.
-Gemini is real: `run` spends one call per email that passes the pre-filter (5 of the 9 below).
+Gemini is real: `run` spends one call per email that passes the pre-filter (5 of the 14 below).
 
 `run` also writes demo-video/src/data/trace.json: what each email scored on the pre-filter, the JSON
 Gemini actually returned, and where the pipeline routed it. The video's pipeline scene is drawn from it.
@@ -74,6 +74,16 @@ FAKE_EMAILS = [
     _email(9, "Jordan Lee <jordan.lee@example.com>", "Photos from the hike",
            "Uploaded the photos from Saturday's hike to the shared album. The one at the summit came out "
            "great."),
+    _email(10, "ShopLane <orders@shoplane.com>", "Your order has shipped",
+           "Good news: your order is on its way. Track your package any time from your account."),
+    _email(11, "Linkup <notifications@linkup.social>", "12 people viewed your profile",
+           "See who's been looking at your profile and grow your network with new connections."),
+    _email(12, "Northfield Weekly <news@northfield.edu>", "This week at Northfield",
+           "Club highlights, a new cafe in the student center, and photos from homecoming."),
+    _email(13, "Pixelpost <hello@pixelpost.app>", "Someone commented on your post",
+           "Alex left a comment on your photo. Open the app to reply."),
+    _email(14, "Fresh Basket <deals@freshbasket.com>", "Fresh picks for your weekend",
+           "Seasonal produce, new recipes, and a few favorites back in stock."),
 ]
 
 
