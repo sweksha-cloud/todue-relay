@@ -2,7 +2,7 @@
 // the real pre-filter, the JSON Gemini actually returned, and where the real pipeline routed each email.
 import trace from "./data/trace.json";
 
-export type Route = "filtered_out" | "auto_scheduled" | "needs_review" | "action_item" | "skipped" | "failed";
+export type Route = "filtered_out" | "deferred" | "auto_scheduled" | "needs_review" | "action_item" | "skipped" | "failed";
 
 export type TraceEmail = {
   id: string;

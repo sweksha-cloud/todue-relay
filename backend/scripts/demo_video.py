@@ -116,9 +116,9 @@ def install_fakes() -> FakeCalendar:
     return cal
 
 
-def _route(row: ProcessedEmail | None) -> str:
-    if row is None:
-        return "filtered_out"
+def _route(row: ProcessedEmail | None, passed_filter: bool) -> str:
+    if row is None:  # never claimed: either the pre-filter dropped it, or the daily budget held it back
+        return "deferred" if passed_filter else "filtered_out"
     if row.extraction_action_type and row.extraction_action_type.value in ("needs_reply", "unclear"):
         return "action_item"
     return {"added": "auto_scheduled", "needs review": "needs_review"}.get(display_status(row), display_status(row))
@@ -166,14 +166,15 @@ def run(keep: bool = False, redo: tuple[str, ...] = ()) -> None:
     for e in FAKE_EMAILS:
         row = session.get(ProcessedEmail, e.id)
         signals = score_email(e.subject, e.body_text)
+        passed = is_actionable_candidate(e.subject, e.body_text)
         trace.append({
             "id": e.id,
             "sender": e.sender.split(" <")[0],
             "subject": e.subject,
             "snippet": " ".join(e.body_text.split())[:110],
-            "filter": {"signals": signals, "passed": is_actionable_candidate(e.subject, e.body_text)},
+            "filter": {"signals": signals, "passed": passed},
             "extraction": raw_by_id.get(e.id),
-            "route": _route(row),
+            "route": _route(row, passed),
             "deadline": row.extraction_deadline_parsed.isoformat() if row and row.extraction_deadline_parsed else None,
             "has_time": bool(row and row.extraction_has_time),
         })

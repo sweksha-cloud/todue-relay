@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-07T10:40:45.317412+00:00",
+  "generated_at": "2026-10-08T00:20:05.517965+00:00",
   "emails": [
     {
       "id": "demo-01",
@@ -131,9 +131,18 @@
         },
         "passed": true
       },
-      "extraction": null,
-      "route": "failed",
-      "deadline": null,
+      "extraction": {
+        "email_id": "demo-06",
+        "event_name": "Spring housing renewal",
+        "deadline_date": "October 30, 2026",
+        "source_context": "Spring housing renewals are tentatively due October 30, with the final deadline to be confirmed in a later email.",
+        "confidence": "low",
+        "action_type": "deadline",
+        "is_recurring": false,
+        "recurrence_rule": null
+      },
+      "route": "needs_review",
+      "deadline": "2026-10-31T00:20:00+00:00",
       "has_time": false
     },
     {

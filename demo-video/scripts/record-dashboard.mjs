@@ -19,6 +19,7 @@ const here = new URL("..", import.meta.url).pathname;
 // A visible cursor: Playwright's recording does not draw the real one.
 const CURSOR = `
   addEventListener("DOMContentLoaded", () => {
+    document.documentElement.style.zoom = "1.35"; // the dashboard is 880px wide; fill more of the frame
     const c = document.createElement("div");
     c.style.cssText = "position:fixed;z-index:99999;width:22px;height:22px;border-radius:50%;pointer-events:none;" +
       "background:rgba(37,99,235,.35);border:2px solid #2563eb;transform:translate(-50%,-50%);left:-50px;top:-50px;transition:transform .12s";
@@ -40,7 +41,7 @@ await page.goto(DASHBOARD_URL);
 await page.waitForLoadState("networkidle");
 const start = at(); // everything before this is a blank page loading; trimmed off below
 await page.mouse.move(800, 300);
-await page.waitForTimeout(1800);
+await page.waitForTimeout(3200); // time to read the held-back item
 
 // The held-back email in "Needs your review".
 const row = page.locator("#section-needs_review .item").first();
@@ -75,11 +76,10 @@ await page.waitForTimeout(900);
 const landed = page.locator("#section-to_check .item", { hasText: title }).first();
 await landed.evaluate((el) => el.scrollIntoView({ behavior: "smooth", block: "center" }));
 await page.waitForTimeout(900);
-const lbox = await landed.boundingBox();
-await page.mouse.move(lbox.x + 140, lbox.y + lbox.height / 2, { steps: 20 });
+await page.mouse.move(1500, 120, { steps: 20 }); // out of the way: the highlight marks the item
 const calendarShownAt = at();
 await landed.evaluate((el) => { el.style.transition = "background .4s"; el.style.background = "#ecfdf3"; el.style.borderRadius = "10px"; });
-await page.waitForTimeout(3200);
+await page.waitForTimeout(5000);
 const end = at();
 
 await context.close();

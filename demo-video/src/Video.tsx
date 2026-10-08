@@ -8,15 +8,16 @@ import { Pipeline } from "./scenes/Pipeline";
 import { Calendar } from "./scenes/Calendar";
 import { Dashboard } from "./scenes/Dashboard";
 import { sec } from "./theme";
+import timing from "./data/dashboard-timing.json";
 
 export const TRANSITION = 12;
 export const SCENES = {
   title: sec(3),
   inbox: sec(8),
   pipeline: sec(15),
-  calendar: sec(8),
-  dashboard: sec(15),
-  end: sec(3),
+  calendar: sec(9),
+  dashboard: Math.min(sec(15), sec(timing.durationSec)), // as long as the recording, capped at 15 s
+  end: sec(4),
 };
 // Five transitions overlap their neighbours, so they shorten the total.
 export const TOTAL = Object.values(SCENES).reduce((a, b) => a + b, 0) - 5 * TRANSITION;
