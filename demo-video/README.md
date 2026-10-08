@@ -30,5 +30,6 @@ npm run record      # writes public/dashboard.mp4 and src/data/dashboard-timing.
 npm run render      # writes out/todue-demo.mp4 (and the 1x cut, out/todue-demo-1x.mp4)
 ```
 
-`npm run studio` opens Remotion's preview to scrub through the video while editing. The rendered MP4 and
-the recording are gitignored.
+`npm run studio` opens Remotion's preview to scrub through the video while editing. The renders in `out/`
+and the recording are gitignored; the copy the main README links to is `docs/todue-demo.mp4`, so after a
+new render, `cp out/todue-demo.mp4 ../docs/todue-demo.mp4` and commit it.
