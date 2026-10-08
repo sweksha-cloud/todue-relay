@@ -5,7 +5,7 @@ import { EMAILS, NEW_EMAIL, PASSED, Route, shownExtraction, TraceEmail } from ".
 import { C, cardStyle, monoFamily, sec } from "../theme";
 
 // Stage lengths. The pre-filter gets longest: it is a 17-row rule table plus its summary.
-const FILTER = sec(6.5);
+const FILTER = sec(8.5); // long enough to read the summary: 17 emails -> 8 LLM calls
 const EXTRACT = sec(5);
 const GATE = sec(5);
 export const PIPELINE_LENGTH = FILTER + EXTRACT + GATE;

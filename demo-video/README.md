@@ -1,6 +1,6 @@
 # Demo video
 
-A 31-second video of ToDue Relay working end to end, built with [Remotion](https://www.remotion.dev)
+A 33-second video of ToDue Relay working end to end, built with [Remotion](https://www.remotion.dev)
 (React components rendered to MP4). 1920x1080, 30 fps, captions, no audio, played at 1.25x speed.
 
 Nothing in it is mocked up by hand. Every email is made up, but what happens to them is real:
