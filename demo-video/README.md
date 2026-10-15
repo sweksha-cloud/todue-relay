@@ -33,3 +33,12 @@ npm run render      # writes out/todue-demo.mp4 (and the 1x cut, out/todue-demo-
 `npm run studio` opens Remotion's preview to scrub through the video while editing. The renders in `out/`
 and the recording are gitignored; the copy the main README links to is `docs/todue-demo.mp4`, so after a
 new render, `cp out/todue-demo.mp4 ../docs/todue-demo.mp4` and commit it.
+
+`docs/todue-demo.gif` is a GIF made from that MP4, for places a video can't play inline (like a GitHub profile README). Regenerate it with
+ffmpeg and [gifski](https://gif.ski):
+
+```bash
+mkdir -p /tmp/todue-frames
+ffmpeg -i ../docs/todue-demo.mp4 -vf "fps=12,scale=960:-1:flags=lanczos" /tmp/todue-frames/%04d.png
+gifski --fps 12 --width 960 --quality 80 -o ../docs/todue-demo.gif /tmp/todue-frames/*.png
+```
