@@ -450,6 +450,22 @@ class TestDryRun:
         assert result["would_process"] == 2
         assert result["deferred"] == 2
 
+    def test_names_the_waiting_emails_by_subject_and_sender(self, harness, db_session):
+        _spend(db_session, 7)  # 1 left
+        harness.emails = [
+            _email(id="e1", subject="Rent due the 1st", sender="landlord@example.com"),
+            _email(id="e2", subject="Assignment 3 due Friday", sender="prof@school.edu"),
+        ]
+
+        result = pipeline.run_pipeline(dry_run=True)
+
+        assert result["would_process_emails"] == [
+            {"id": "e1", "subject": "Rent due the 1st", "sender": "landlord@example.com"}
+        ]
+        assert result["deferred_emails"] == [
+            {"id": "e2", "subject": "Assignment 3 due Friday", "sender": "prof@school.edu"}
+        ]
+
     def test_classifies_skips_the_same_way_a_real_run_does(self, harness, db_session):
         """Same input, same tallies for everything that costs nothing."""
         repository.try_claim_email(db_session, "e4", "t", "s")

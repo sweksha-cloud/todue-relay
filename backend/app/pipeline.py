@@ -82,6 +82,9 @@ def run_pipeline(*, dry_run: bool = False) -> dict:
             return _empty_summary(skipped_run=True)
     fetched = processed = failed = filtered_out = already_terminal = deferred = would_process = 0
     would_process_ids: list[str] = []
+    # Subject and sender alongside the id, so a dry run can say which emails are waiting for Gemini.
+    would_process_emails: list[dict] = []
+    deferred_emails: list[dict] = []
     stuck_ids: list[str] = []
     newly_parked: list[dict] = []
 
@@ -127,9 +130,11 @@ def run_pipeline(*, dry_run: bool = False) -> dict:
                 filtered_out += 1
             elif outcome == "deferred":
                 deferred += 1
+                deferred_emails.append(_email_summary(email))
             elif outcome == "would_process":
                 would_process += 1
                 would_process_ids.append(email.id)
+                would_process_emails.append(_email_summary(email))
 
         service = get_gmail_service()
         messages = fetch_recent_messages(
@@ -204,10 +209,16 @@ def run_pipeline(*, dry_run: bool = False) -> dict:
         "dry_run": dry_run,
         "would_process": would_process,
         "would_process_ids": would_process_ids,
+        "would_process_emails": would_process_emails,
+        "deferred_emails": deferred_emails,
         "recovery_candidate_ids": stuck_ids,
         "newly_parked": [p["id"] for p in newly_parked],
         "skipped_run": False,
     }
+
+
+def _email_summary(email) -> dict:
+    return {"id": email.id, "subject": email.subject, "sender": email.sender}
 
 
 def _empty_summary(*, skipped_run: bool) -> dict:
@@ -221,6 +232,8 @@ def _empty_summary(*, skipped_run: bool) -> dict:
         "dry_run": False,
         "would_process": 0,
         "would_process_ids": [],
+        "would_process_emails": [],
+        "deferred_emails": [],
         "recovery_candidate_ids": [],
         "newly_parked": [],
         "skipped_run": skipped_run,

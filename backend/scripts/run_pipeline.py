@@ -22,13 +22,20 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 from app.pipeline import run_pipeline  # noqa: E402
 
 
+def _print_emails(emails: list[dict]) -> None:
+    for e in emails:
+        print(f"      - {e['subject'] or '(no subject)'}  |  {e['sender']}  [{e['id']}]")
+
+
 def _print_dry_run_report(result: dict) -> None:
     print("DRY RUN — no Gemini calls, no database writes, no Calendar changes.")
     print(f"  fetched from Gmail:              {result['fetched']}")
     print(f"  already done in a prior run:     {result['already_terminal']}")
     print(f"  rejected by the pre-filter:      {result['filtered_out']}")
-    print(f"  would be sent to Gemini:         {result['would_process']}  {result['would_process_ids']}")
+    print(f"  would be sent to Gemini:         {result['would_process']}")
+    _print_emails(result["would_process_emails"])
     print(f"  deferred (daily budget spent):   {result['deferred']}")
+    _print_emails(result["deferred_emails"])
     print(f"  stuck/failed emails to recover:  {len(result['recovery_candidate_ids'])}  {result['recovery_candidate_ids']}")
 
 
