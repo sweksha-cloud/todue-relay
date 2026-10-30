@@ -238,9 +238,14 @@ both settings for one manual run:
    since the hourly runs only look back 2 days. Add 1 to `FETCH_WINDOW_DAYS` each day.
 
 Re-running is always safe: emails already handled are skipped, so nothing is created
-twice. If you see `Skipping message ...: Quota exceeded ... Units per minute per user`,
-Gmail rate-limited a large fetch; those emails were skipped, not lost, and the next
-run picks them up.
+twice. A large fetch can hit Gmail's per-minute read limit; each read retries with
+backoff, and if some still fail you see one line, `Skipped N of M emails Gmail didn't
+return (...)`. Those emails were skipped, not lost, and the next run picks them up.
+
+**On the dashboard,** the **Check waiting mail** button lists the emails waiting for
+Gemini, with links to open each one in Gmail. It looks at the same 2-day window as the
+hourly runs, so it doesn't show the older backlog from a catch-up; use the dry run above
+for that.
 
 ### Tuning the pre-filter
 
