@@ -172,6 +172,29 @@ uvicorn app.main:app --port 8000     # -> http://localhost:8000
 Prefer `--dry-run` for checking changes; the free tier is only 20 Gemini calls a
 day.
 
+### 6. Sign in to Google again every week
+
+While the OAuth app is in "Testing" status, Google expires the refresh token 7 days
+after you sign in. Once it expires, every scheduled run fails with `invalid_grant` /
+`GoogleReauthRequired`, and the CloudWatch error alarm emails you every hour until
+you sign in again. To sign in again, run this on your laptop (it opens a browser):
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m scripts.reauth_google
+```
+
+On the consent screen, choose your account, then **Advanced**, then **Go to
+&lt;app&gt; (unsafe)**, and allow both permissions. The new token is saved to the
+database, so Lambda and Actions pick it up on their next run. Nothing needs
+redeploying.
+
+**Do it before the 7 days are up.** A fresh sign-in restarts the clock, so running
+the command on the same day each week, from a recurring calendar reminder, means the
+alarms never fire. If they already have, run the same command; the next hourly run
+succeeds and the alarm clears.
+
 ### Tuning the pre-filter
 
 ```bash
@@ -341,6 +364,7 @@ backend/
     config.py                   # every setting, read from the environment
   scripts/
     run_pipeline.py             # entry point (what CI schedules); --dry-run
+    reauth_google.py            # weekly Google sign-in when the refresh token expires
     tune_filter.py              # pre-filter tuning against a real inbox
   lambda_handler.py             # AWS Lambda entry point
   requirements.txt              # full app (pipeline + dashboard)
@@ -371,7 +395,7 @@ Known limitations:
 - **The AWS hosting is time-boxed** to the free plan, which ends in March 2027
   (see [Deployment](#deployment)).
 - **Google refresh tokens expire every 7 days** while the OAuth app is in Testing
-  status.
+  status; see [Sign in to Google again every week](#6-sign-in-to-google-again-every-week).
 - **Single-user by design.** It reads one Gmail account. See [SCALING.md](SCALING.md) for how I'd
   extend this to multiple users.
 
