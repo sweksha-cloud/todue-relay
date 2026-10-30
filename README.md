@@ -195,6 +195,34 @@ the command on the same day each week, from a recurring calendar reminder, means
 alarms never fire. If they already have, run the same command; the next hourly run
 succeeds and the alarm clears.
 
+### Catching up after a long outage
+
+A normal run only looks at unread mail from the last `FETCH_WINDOW_DAYS` (2) days, at
+most `MAX_EMAILS_PER_RUN` (50) of them. If the token was expired for longer than that,
+the emails from the gap are never fetched again on their own. To sync them, widen
+both settings for one manual run:
+
+1. Find how many days the pipeline was down: the date of the last successful run on
+   the dashboard's `/metrics` page, or the last time the alarm emails didn't arrive.
+   Add a day or two of margin.
+2. Preview it first. A dry run spends no Gemini quota and writes nothing:
+
+   ```bash
+   cd backend
+   source .venv/bin/activate
+   FETCH_WINDOW_DAYS=25 MAX_EMAILS_PER_RUN=500 python -m scripts.run_pipeline --dry-run
+   ```
+
+3. Run it for real with the same settings (drop `--dry-run`).
+4. **Repeat it once a day until the dry run shows nothing left.** Only 20 emails a day
+   can go to Gemini; the rest are "deferred" and need the wide window to be found again,
+   since the hourly runs only look back 2 days. Add 1 to `FETCH_WINDOW_DAYS` each day.
+
+Re-running is always safe: emails already handled are skipped, so nothing is created
+twice. If you see `Skipping message ...: Quota exceeded ... Units per minute per user`,
+Gmail rate-limited a large fetch; those emails were skipped, not lost, and the next
+run picks them up.
+
 ### Tuning the pre-filter
 
 ```bash
