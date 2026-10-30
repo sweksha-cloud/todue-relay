@@ -43,9 +43,14 @@ ACTION_TYPE_BADGE_CLASS = {
 
 def gmail_url(thread_id: str) -> str:
     """A link that opens the email's conversation in Gmail on the web, where it can be read or replied to.
-    /mail/u/<address>/ picks the right account when several are signed in; /mail/u/0/ is the first one."""
-    account = quote(GMAIL_ACCOUNT_EMAIL, safe="@") if GMAIL_ACCOUNT_EMAIL else "0"
-    return f"https://mail.google.com/mail/u/{account}/#all/{quote(thread_id, safe='')}"
+    ?authuser=<address> picks the right account when several are signed in, and asks you to sign in
+    when that account isn't. (/mail/u/<address>/ did the first but not the second: with the account
+    signed out, Gmail showed "Temporary Error (404)" instead.) Without an address, /mail/u/0/ is the
+    browser's first account."""
+    anchor = f"#all/{quote(thread_id, safe='')}"
+    if GMAIL_ACCOUNT_EMAIL:
+        return f"https://mail.google.com/mail/?authuser={quote(GMAIL_ACCOUNT_EMAIL, safe='@')}{anchor}"
+    return f"https://mail.google.com/mail/u/0/{anchor}"
 
 
 def friendly_error(message: str | None) -> str:

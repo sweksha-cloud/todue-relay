@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from app.db import repository
 from app.db.models import ProcessedEmail, ProcessingStatus, RunStatus
 from app.schemas import ExtractionResult
-from app import calendar_client, date_utils, main, metrics, pipeline
+from app import calendar_client, date_utils, main, metrics, pipeline, view_helpers
 from app.db.session import get_db
 from app.main import app
 
@@ -108,6 +108,30 @@ class TestCheckWaitingMail:
         assert "<strong>3</strong> waiting" in response.text  # 2 next run + 1 held back
         assert "2 will be sent to Gemini on the next run" in response.text
         assert "1 held back by the daily limit" in response.text
+
+    def test_lists_the_waiting_emails_by_subject_and_sender(self, client, monkeypatch):
+        monkeypatch.setattr(pipeline, "run_pipeline", _fake_dry_run(
+            [], would_process=1, deferred=1,
+            would_process_emails=[{"id": "e1", "subject": "Rent due the 1st", "sender": "landlord@example.com"}],
+            deferred_emails=[{"id": "e2", "subject": "Assignment 3 due Friday", "sender": "prof@school.edu"}],
+        ))
+
+        text = client.post("/waiting").text
+
+        assert "Rent due the 1st" in text and "landlord@example.com" in text and "next run" in text
+        assert "Assignment 3 due Friday" in text and "held back to a later day" in text
+        assert 'href="' + view_helpers.gmail_url("e1") + '"' in text
+
+    def test_a_waiting_subject_is_escaped(self, client, monkeypatch):
+        monkeypatch.setattr(pipeline, "run_pipeline", _fake_dry_run(
+            [], would_process=1,
+            would_process_emails=[{"id": "e1", "subject": "<script>alert(1)</script>", "sender": "x"}],
+        ))
+
+        text = client.post("/waiting").text
+
+        assert "<script>alert(1)</script>" not in text
+        assert "&lt;script&gt;" in text
 
     def test_zero_waiting_is_said_plainly(self, client, monkeypatch):
         monkeypatch.setattr(pipeline, "run_pipeline", _fake_dry_run([]))
@@ -1085,7 +1109,9 @@ class TestOpenInGmail:
 
         monkeypatch.setattr(view_helpers, "GMAIL_ACCOUNT_EMAIL", "me@example.com")
 
-        assert view_helpers.gmail_url("18c2f") == "https://mail.google.com/mail/u/me@example.com/#all/18c2f"
+        # ?authuser=, not /mail/u/<address>/: the latter shows Gmail's "Temporary Error (404)" when that
+        # account isn't signed in, instead of offering to sign in.
+        assert view_helpers.gmail_url("18c2f") == "https://mail.google.com/mail/?authuser=me@example.com#all/18c2f"
 
 
 class TestFriendlyError:

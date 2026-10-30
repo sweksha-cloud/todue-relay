@@ -6,4 +6,15 @@
   <span class="verdict">&mdash; {{ result.would_process }} will be sent to Gemini on the next run{% if result.deferred %}, {{ result.deferred }} held back by the daily limit{% endif %}</span>
   {% if result.deferred %}<span class="badge badge-review">daily Gemini quota spent</span>{% endif %}
   <div class="verdict">Checked {{ (checked_at | to_local).strftime("%I:%M %p") }} &middot; reads Gmail only &mdash; no Gemini calls, nothing changed</div>
+  {% set waiting = (result.would_process_emails or []) + (result.deferred_emails or []) %}
+  {% if waiting %}
+    <ul class="waiting-list">
+      {% for e in result.would_process_emails or [] %}
+        <li><a href="{{ gmail_url(e.id) }}" target="_blank" rel="noopener">{{ e.subject or "(no subject)" }}</a> <span class="verdict">{{ e.sender }} &middot; next run</span></li>
+      {% endfor %}
+      {% for e in result.deferred_emails or [] %}
+        <li><a href="{{ gmail_url(e.id) }}" target="_blank" rel="noopener">{{ e.subject or "(no subject)" }}</a> <span class="verdict">{{ e.sender }} &middot; held back to a later day</span></li>
+      {% endfor %}
+    </ul>
+  {% endif %}
 {% endif %}

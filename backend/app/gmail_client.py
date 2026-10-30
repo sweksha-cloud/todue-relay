@@ -5,12 +5,21 @@ docs/design-decisions.md decision 28)."""
 from __future__ import annotations
 
 import base64
+import logging
 from dataclasses import dataclass
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from app.google_auth import get_google_credentials
+
+logger = logging.getLogger(__name__)
+
+# Gmail answers a burst of reads (a catch-up run fetching hundreds of messages) with 403/429
+# "rateLimitExceeded". googleapiclient retries those itself, with exponential backoff, when given
+# num_retries; it logs a WARNING per retry, which buried the run's summary, so that logger is quieted.
+GMAIL_NUM_RETRIES = 5
+logging.getLogger("googleapiclient.http").setLevel(logging.ERROR)
 
 
 @dataclass
@@ -136,26 +145,8 @@ def fetch_recent_messages(service, max_results: int = 50, query: str | None = No
     if query:
         list_kwargs["q"] = query
 
-    results = service.users().messages().list(**list_kwargs).execute()
-    message_stubs = results.get("messages", [])
-
-    messages: list[EmailMessage] = []
-    for stub in message_stubs:
-        try:
-            msg = (
-                service.users()
-                .messages()
-                .get(userId="me", id=stub["id"], format="full")
-                .execute()
-            )
-        except HttpError as e:
-            # One bad message shouldn't abort the whole fetch.
-            print(f"Skipping message {stub['id']}: {e}")
-            continue
-
-        messages.append(_to_email_message(msg))
-
-    return messages
+    results = service.users().messages().list(**list_kwargs).execute(num_retries=GMAIL_NUM_RETRIES)
+    return _get_messages(service, [stub["id"] for stub in results.get("messages", [])])
 
 
 def fetch_messages_by_ids(service, message_ids: list[str]) -> list[EmailMessage]:
@@ -164,23 +155,38 @@ def fetch_messages_by_ids(service, message_ids: list[str]) -> list[EmailMessage]
     FAILED row whose email no longer matches the normal fetch query — see
     repository.get_recoverable_stuck_email_ids.
     """
+    return _get_messages(service, message_ids)
+
+
+def _get_messages(service, message_ids: list[str]) -> list[EmailMessage]:
+    """Fetch each message in full. One that still fails after the retries (deleted since it was
+    listed, or Gmail still rate-limiting) is skipped rather than aborting the whole fetch; it is
+    unprocessed, so a later run picks it up. Skips are reported as one summary line, not one
+    traceback-sized line per message.
+    """
     messages: list[EmailMessage] = []
+    skipped: dict[str, int] = {}
     for message_id in message_ids:
         try:
             msg = (
                 service.users()
                 .messages()
                 .get(userId="me", id=message_id, format="full")
-                .execute()
+                .execute(num_retries=GMAIL_NUM_RETRIES)
             )
         except HttpError as e:
-            # Message may have been deleted since it was claimed — skip it,
-            # same failure-isolation policy as the normal fetch path.
-            print(f"Skipping message {message_id}: {e}")
+            reason = "rate-limited by Gmail" if e.resp.status in (403, 429) else f"HTTP {e.resp.status}"
+            skipped[reason] = skipped.get(reason, 0) + 1
             continue
 
         messages.append(_to_email_message(msg))
 
+    if skipped:
+        detail = ", ".join(f"{n} {reason}" for reason, n in skipped.items())
+        logger.warning(
+            "Skipped %d of %d emails Gmail didn't return (%s); a later run picks them up",
+            sum(skipped.values()), len(message_ids), detail,
+        )
     return messages
 
 

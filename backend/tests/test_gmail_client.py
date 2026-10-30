@@ -1,7 +1,14 @@
 import pytest
 from googleapiclient.errors import HttpError
 
-from app.gmail_client import _has_calendar_invite, _to_email_message, trash_message
+from app.gmail_client import (
+    GMAIL_NUM_RETRIES,
+    _has_calendar_invite,
+    _to_email_message,
+    fetch_messages_by_ids,
+    fetch_recent_messages,
+    trash_message,
+)
 
 
 def _http_error(status: int) -> HttpError:
@@ -216,3 +223,58 @@ class TestTrashMessage:
 
         with pytest.raises(HttpError):
             trash_message(service, "e1")
+
+
+def _gmail_message(message_id: str) -> dict:
+    return {
+        "id": message_id, "threadId": "t", "snippet": "",
+        "payload": {"headers": [{"name": "Subject", "value": f"subject {message_id}"}], "mimeType": "text/plain", "body": {}},
+    }
+
+
+class TestFetchingSurvivesGmailRateLimits:
+    """A catch-up run reads hundreds of messages, and Gmail answers a burst with 403
+    "rateLimitExceeded". Every read retries with backoff; one that still fails is skipped with a
+    single summary line, not one error per email."""
+
+    def _service(self, failing_ids=(), status=403):
+        from unittest.mock import MagicMock
+
+        service = MagicMock()
+        service.users().messages().list().execute.return_value = {"messages": [{"id": "a"}, {"id": "b"}, {"id": "c"}]}
+
+        def get(userId, id, format):
+            request = MagicMock()
+            if id in failing_ids:
+                request.execute.side_effect = _http_error(status)
+            else:
+                request.execute.return_value = _gmail_message(id)
+            return request
+
+        service.users().messages().get.side_effect = get
+        return service
+
+    def test_every_read_asks_googleapiclient_to_retry_with_backoff(self):
+        from unittest.mock import MagicMock
+
+        request = MagicMock()
+        request.execute.return_value = _gmail_message("a")
+        service = MagicMock()
+        service.users().messages().get.return_value = request
+
+        fetch_messages_by_ids(service, ["a"])
+
+        request.execute.assert_called_with(num_retries=GMAIL_NUM_RETRIES)
+
+    def test_a_message_still_rate_limited_is_skipped_and_the_rest_are_returned(self):
+        messages = fetch_recent_messages(self._service(failing_ids={"b"}), query="is:unread")
+
+        assert [m.id for m in messages] == ["a", "c"]
+
+    def test_skips_are_one_summary_line_not_one_per_email(self, caplog, capsys):
+        with caplog.at_level("WARNING", logger="app.gmail_client"):
+            fetch_recent_messages(self._service(failing_ids={"a", "b"}), query="is:unread")
+
+        assert capsys.readouterr().out == ""  # nothing printed per message
+        warnings = [r.getMessage() for r in caplog.records if r.name == "app.gmail_client"]
+        assert warnings == ["Skipped 2 of 3 emails Gmail didn't return (2 rate-limited by Gmail); a later run picks them up"]
