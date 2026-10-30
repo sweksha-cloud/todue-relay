@@ -172,6 +172,22 @@ uvicorn app.main:app --port 8000     # -> http://localhost:8000
 Prefer `--dry-run` for checking changes; the free tier is only 20 Gemini calls a
 day.
 
+### Opening the dashboard
+
+The dashboard (FastAPI + htmx) runs only on your own machine. To open it:
+
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --port 8000
+```
+
+Then go to [http://localhost:8000](http://localhost:8000) in your browser. It reads the
+same database as the scheduled runs, so it shows everything Lambda has processed. Leave
+the terminal open while you use it, and press `Ctrl+C` there to stop it. If port 8000 is
+taken, pick another (`--port 8001`) and open that instead. `/metrics` has the run
+history and today's Gemini usage.
+
 ### 6. Sign in to Google again every week
 
 While the OAuth app is in "Testing" status, Google expires the refresh token 7 days
@@ -203,7 +219,8 @@ the emails from the gap are never fetched again on their own. To sync them, wide
 both settings for one manual run:
 
 1. Find how many days the pipeline was down: the date of the last successful run on
-   the dashboard's `/metrics` page, or the last time the alarm emails didn't arrive.
+   the dashboard's `/metrics` page (see [Opening the dashboard](#opening-the-dashboard)),
+   or the day the alarm emails started.
    Add a day or two of margin.
 2. Preview it first. A dry run spends no Gemini quota and writes nothing:
 
@@ -213,6 +230,8 @@ both settings for one manual run:
    FETCH_WINDOW_DAYS=25 MAX_EMAILS_PER_RUN=500 python -m scripts.run_pipeline --dry-run
    ```
 
+   The report lists, by subject and sender, the emails that would go to Gemini today
+   and the ones deferred to a later day.
 3. Run it for real with the same settings (drop `--dry-run`).
 4. **Repeat it once a day until the dry run shows nothing left.** Only 20 emails a day
    can go to Gemini; the rest are "deferred" and need the wide window to be found again,
