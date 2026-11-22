@@ -15,7 +15,7 @@ google-auth-oauthlib==1.2.1
 google-genai==2.23.0
 python-dotenv==1.2.3
 pydantic==2.13.5
-python-dateutil==2.9.0.post0
+python-dateutil==4.0.0
 SQLAlchemy==2.0.52
 psycopg[binary]==3.2.10
 boto3==1.43.98
