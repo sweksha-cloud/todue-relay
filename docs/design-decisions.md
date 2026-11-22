@@ -389,6 +389,26 @@ this button works, since a token issued under the old, narrower scope keeps refr
 same narrower grant — only a fresh consent grants a new scope.
 
 
+### 29. An SLO instead of an alarm on every error
+
+**Decision.** The pipeline has a service level objective: **95% of hourly runs succeed over a
+rolling 7 days**, which leaves an error budget of about 8 failed runs a week. Alerts fire on how
+fast that budget burns, not on each failure: a fast-burn alarm when 3 of the last 6 runs failed
+(50% failing, 10x the budget rate) and a slow-burn alarm when 4 of the last 24 failed (about 3x).
+The "not running for 3 hours" alarm stays as it was. Both are CloudWatch "M of N" alarms on the
+Lambda `Errors` metric, so they need no custom metrics or code.
+
+**Why.** The old alarm emailed on any single error. One failed run (a Gemini timeout, a Gmail
+hiccup) is retried by the next hour and doesn't need a person; a run of failures does. In the
+Nov 2026 sign-in expiry, every run failed: the fast-burn alarm fires on the third, and one OK email
+follows the next successful run.
+
+**Why 95%, not 99%.** At 24 runs a day, 99% over a week allows fewer than 2 failures, so a single
+bad afternoon would page. 95% keeps the budget meaningful for an hourly batch job.
+
+**Cost.** A real outage now emails about 2 hours later than before (3 failed hourly runs instead
+of 1). Acceptable for a job whose output is calendar events, not a live service.
+
 ---
 
 ## Scaling to other users (a plan; not built)

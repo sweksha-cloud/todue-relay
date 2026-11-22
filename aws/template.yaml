@@ -169,22 +169,51 @@ Resources:
         - Protocol: email
           Endpoint: !Ref AlertEmail
 
-  # Fires when a run fails or times out. One email on entering ALARM, one on returning to OK.
-  ErrorsAlarm:
+  # SLO (docs/design-decisions.md): 95% of hourly runs succeed over a rolling 7 days.
+  # 168 runs a week leave an error budget of about 8 failed runs. Instead of emailing on
+  # every single failed run, the two alarms below fire on how fast that budget is burning:
+  #   fast: 3 of the last 6 runs failed (50% failing = 10x the budget rate; a week's
+  #         budget would be gone in under a day), e.g. an expired Google sign-in.
+  #   slow: 4 of the last 24 runs failed (~17% = 3.3x; half the week's budget in a day).
+  # A lone failure (a Gemini timeout, a Gmail hiccup) is retried by the next hourly run
+  # and stays inside the budget. One email on entering ALARM, one on returning to OK.
+  BudgetFastBurnAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub ${AppName}-pipeline-errors
+      AlarmName: !Sub ${AppName}-slo-fast-burn
       AlarmDescription: !Sub >-
-        ${AppName} pipeline Lambda returned an error or timed out.
-        Check CloudWatch Logs /aws/lambda/${AppName}-pipeline.
+        ${AppName}: 3 of the last 6 hourly runs failed, burning the 95% success SLO's
+        error budget 10x too fast. Check CloudWatch Logs /aws/lambda/${AppName}-pipeline
+        (an expired Google sign-in shows as GoogleReauthRequired).
       Namespace: AWS/Lambda
       MetricName: Errors
       Dimensions:
         - { Name: FunctionName, Value: !Ref PipelineFunction }
       Statistic: Sum
-      Period: 300
-      EvaluationPeriods: 1
-      DatapointsToAlarm: 1
+      Period: 3600
+      EvaluationPeriods: 6
+      DatapointsToAlarm: 3
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  BudgetSlowBurnAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AppName}-slo-slow-burn
+      AlarmDescription: !Sub >-
+        ${AppName}: 4 of the last 24 hourly runs failed, burning the 95% success SLO's
+        error budget about 3x too fast. Check CloudWatch Logs /aws/lambda/${AppName}-pipeline.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - { Name: FunctionName, Value: !Ref PipelineFunction }
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 24
+      DatapointsToAlarm: 4
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching

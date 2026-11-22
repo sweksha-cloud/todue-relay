@@ -1,0 +1,24 @@
+# Weekly dependency updates, grouped so minor and patch bumps arrive as one PR per
+# ecosystem. Security fixes still arrive right away (Dependabot security updates are on).
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /backend
+    schedule: { interval: weekly, day: monday }
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /gmail-ui
+    schedule: { interval: weekly, day: monday }
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    groups:
+      actions:
+        patterns: ['*']

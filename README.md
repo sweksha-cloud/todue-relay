@@ -192,8 +192,8 @@ history and today's Gemini usage.
 
 While the OAuth app is in "Testing" status, Google expires the refresh token 7 days
 after you sign in. Once it expires, every scheduled run fails with `invalid_grant` /
-`GoogleReauthRequired`, and the CloudWatch error alarm emails you every hour until
-you sign in again. To sign in again, run this on your laptop (it opens a browser):
+`GoogleReauthRequired`, and after 3 failed runs the SLO fast-burn alarm emails you
+(and again when runs succeed after you sign in). To sign in again, run this on your laptop (it opens a browser):
 
 ```bash
 cd backend
@@ -361,8 +361,10 @@ flowchart LR
   defined in `aws/template.yaml`, and their policies were checked with IAM Access Analyzer
   before first use.
 - **Failure containment.** No automatic retries (a retry would spend scarce Gemini
-  quota) and a queued event is dropped after 60 seconds. A CloudWatch alarm emails on
-  any error, and a second alarm fires if the function hasn't run for about 3 hours.
+  quota) and a queued event is dropped after 60 seconds. An SLO (95% of hourly runs
+  succeed over 7 days) drives the alerts: an email when 3 of the last 6 runs fail or 4 of
+  the last 24, rather than on every single error; a third alarm fires if the function
+  hasn't run for about 3 hours.
 - **No overlapping runs.** The pipeline refuses to start while another run is in
   progress (the database-level guard described above), which covers a manual run during
   a scheduled one and Actions overlapping Lambda. Lambda's own "reserved concurrency"
