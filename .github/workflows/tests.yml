@@ -50,6 +50,22 @@ jobs:
           TEST_DATABASE_URL: postgresql+psycopg://postgres:test@localhost:5432/testdb
         run: python -m pytest tests/ -v
 
+  # Known vulnerabilities in the Python dependencies, both the app's and the Lambda bundle's
+  # (pip-audit against the OSV / PyPI advisory databases). Fails on any finding.
+  dependency-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: pip install pip-audit
+      - name: Audit requirements
+        run: pip-audit -r requirements.txt -r requirements-lambda.txt --progress-spinner off
+
   # The Gmail add-on (gmail-ui/): type check, unit tests, and a build to prove the bundle still forms.
   gmail-ui:
     runs-on: ubuntu-latest
