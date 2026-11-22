@@ -10,8 +10,9 @@ CloudWatch alarm history for `todue-relay-sam-pipeline-errors` and the Lambda lo
 - **Why:** the Google OAuth app is in "Testing" status, where Google expires refresh tokens 7 days
   after sign-in. The token expired, so every run stopped at the first Google API call.
 - **Impact:** deadlines arriving during the outage weren't scheduled until the next successful
-  run. No data was lost: the pipeline tracks each email in Postgres, and its 2-day Gmail window
-  picked up the missed emails once runs succeeded again.
+  run. Nothing was processed twice: the pipeline tracks each email in Postgres. The 2-day Gmail
+  fetch window catches up on missed emails as long as an outage is shorter than 2 days; email
+  older than that needs a manual run (`scripts/run_pipeline.py`).
 - **Detection:** the CloudWatch error alarm emailed through SNS.
 - **Resolution:** signed in to Google again (`python -m scripts.reauth_google`); the new token is
   stored in Postgres, so the next scheduled run used it without a redeploy.
@@ -37,8 +38,8 @@ no reminder that actually fired.
 
 - **The failure was loud and specific.** The error names the cause and the fix, and the alarm
   emailed instead of the pipeline failing silently.
-- **Nothing was lost or duplicated.** Per-email tracking in Postgres (idempotent runs) and the
-  2-day fetch window let the pipeline catch up on its own.
+- **Nothing was duplicated.** Per-email tracking in Postgres (idempotent runs) and the 2-day
+  fetch window let the pipeline catch up on its own for any outage shorter than 2 days.
 - **Recovery needed no deploy.** Because the token lives in the database, not the Lambda
   package, re-signing in fixed production directly.
 
