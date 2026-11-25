@@ -38,6 +38,7 @@ from app.db.session import get_session
 from app.filters import contains_reschedule_language, is_actionable_candidate
 from app.gmail_client import fetch_messages_by_ids, fetch_recent_messages, get_gmail_service
 from app import alerts
+from app.injection import screen_extraction
 from app.llm_client import LLMTransientError, extract_deadline
 
 logger = logging.getLogger(__name__)
@@ -313,6 +314,7 @@ def _process_one(session, email) -> None:
     miscounted as processed regardless of which step it came from.
     """
     extraction = extract_deadline(email)  # ExtractionParseError propagates on purpose
+    extraction = screen_extraction(email, extraction)  # suspected prompt injection goes to review
 
     if extraction.action_type != "deadline" or extraction.deadline_date is None:
         # needs_reply / unclear, or a "deadline" the model still left dateless
